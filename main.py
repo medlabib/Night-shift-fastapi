@@ -1,0 +1,193 @@
+import datetime
+import random
+from collections import defaultdict
+from typing import List, Dict, Optional
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+
+app = FastAPI()
+
+class ScheduleInput(BaseModel):
+    doctor_names: str
+    start_date: str
+    end_date: str
+    same_num_doctors: str
+    num_doctors: Optional[int]
+    num_doctors_per_night: Optional[Dict[str, int]]
+    holiday_days: str
+    find: int
+
+
+def parse_date(date_str):
+    return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+
+
+@app.get("/")
+def index():
+    return "Api deployed successfully"
+
+
+@app.post("/schedule")
+def schedule(data: ScheduleInput):
+    # Get the input fields from the POST request
+    doctor_names = data.doctor_names
+    start_date = datetime.datetime.strptime(data.start_date, "%Y-%m-%d").date()
+    end_date = datetime.datetime.strptime(data.end_date, "%Y-%m-%d").date()
+    same_num_doctors = data.same_num_doctors  # True or False
+    num_doctors_per_night = []
+    if same_num_doctors == "Y":
+        num_doctors = data.num_doctors
+        num_doctors_per_night = [int(num_doctors) for _ in
+                                 range((end_date - start_date).days + 1)]  # Same number for all nights
+    holiday_days = data.holiday_days.strip()
+    find = data.find
+    # Process holiday input
+    if holiday_days:
+        holidays = [parse_date(day) for day in holiday_days.split(",")]
+    else:
+        holidays = []
+
+    # Constants
+    DOCTORS = doctor_names.split(",")
+    MAX_POINTS_DIFFERENCE = 1
+
+    # Create a list of days in the scheduling period
+    days = []
+    current_date = start_date
+    while current_date <= end_date:
+        days.append(current_date)
+        current_date += datetime.timedelta(days=1)
+
+    day_indices = {day: i for i, day in enumerate(days)}
+
+    if same_num_doctors != "Y":
+        for day in days:
+            num_doctors_per_night = data.num_doctors_per_night
+
+    # Create a dictionary with points for each day
+    points_per_day = {}
+    for day in days:
+        if day in holidays:
+            points_per_day[day] = 2
+        elif day.weekday() == 5:
+            points_per_day[day] = 1.5
+        elif day.weekday() == 6:
+            points_per_day[day] = 2
+        else:
+            points_per_day[day] = 1
+
+    # Call the existing function to retrieve the other user inputs
+    # Perform scheduling logic
+    provided_informations = [start_date, end_date, same_num_doctors, num_doctors_per_night, holiday_days, find]
+    num_doctors = len(DOCTORS)
+
+    # Other constants
+    def assign_shift(day, doctor, points_value):
+        schedule.append((day, doctor, points_value))
+        points[doctor] += points_value
+        shifts.append((day.day, doctor))
+
+    def calculate_shift_stats(schedule):
+        num_shifts = defaultdict(int)
+        num_weekend_shifts = defaultdict(int)
+
+        for day, doctor, _ in schedule:
+            num_shifts[doctor] += 1
+
+            if day.strftime('%A') in ['Saturday', 'Sunday']:
+                num_weekend_shifts[doctor] += 1
+        return num_shifts, num_weekend_shifts
+    # Initialize variables
+    best_difference = float('inf')
+    best_schedules = []
+
+    # Use pandas date_range to generate a list of days
+    days = pd.date_range(start_date, end_date)
+    for i in range(find):
+        schedule = []
+        points = {doctor: 0 for doctor in DOCTORS}
+        shifts = []
+        for day, num_doctors_this_night in zip(days, num_doctors_per_night):
+            # Get points for the day
+            points_value = points_per_day[day.to_pydatetime().date()]
+            # Choose doctors
+            exclude_doctors = [doc for _, doc in shifts[-int((num_doctors - np.ceil(num_doctors / 3))):]]
+            available_doctors = [d for d in DOCTORS if d not in exclude_doctors]
+            doctors = random.sample(available_doctors, num_doctors_this_night)
+
+            # Assign shift to the doctors
+            [assign_shift(day, doctor, points_value) for doctor in doctors]
+
+        # Calculate maximum and minimum points earned by the doctors
+        max_points = max(points.values())
+        min_points = min(points.values())
+        # Calculate difference in points between the doctors
+        difference = max_points - min_points
+
+        # If difference is better, save the schedule
+        if difference < best_difference:
+            best_difference = difference
+            best_schedules = [schedule]
+        elif difference == best_difference:
+            best_schedules.append(schedule)
+
+        # Initialize the variables to store the optimal schedules and their stats
+    optimal_schedules = []
+    min_difference_in_points = float('inf')
+
+    # Loop through the best schedules and apply the logic to find the optimal schedules
+    for schedule in best_schedules:
+        num_shifts, num_weekend_shifts = calculate_shift_stats(schedule)
+
+        # Calculate the differences in shifts and weekend shifts between doctors
+        shift_difference = max(num_shifts.values()) - min(num_shifts.values())
+        weekend_shift_difference = max(num_weekend_shifts.values()) - min(num_weekend_shifts.values())
+
+        # Calculate the score for the spacing of shifts between doctors
+        spacing_scores = []
+        for doctor in num_shifts.keys():
+            shifts = [(int(day.strftime('%d')), doc, pts) for day, doc, pts in schedule if doc == doctor]
+            if len(shifts) > 1:
+                spacings = np.diff([shift[0] for shift in shifts])
+                spacing_scores.append(spacings)
+
+        # Calculate the variance of the spacings for each doctor
+        variances = [np.var(spacing) for spacing in spacing_scores]
+
+        # Calculate the sum of the variances
+        total_variance = sum(variances)
+
+        # Calculate the sum of the differences and the spacing score
+        total_difference = total_variance + shift_difference + weekend_shift_difference
+
+        # Update the optimal schedules and their stats if necessary
+        if total_difference < min_difference_in_points:
+            min_difference_in_points = total_difference
+            optimal_schedules = [schedule]
+        elif total_difference == min_difference_in_points:
+            optimal_schedules.append(schedule)
+    # Add your scheduling logic here
+    if len(optimal_schedules) > 0:
+        # Group the schedule by days
+        grouped_schedule = {}
+        for day, doctor, points_value in optimal_schedules[0]:
+            if day not in grouped_schedule:
+                grouped_schedule[day] = []
+            grouped_schedule[day].append((doctor, points_value))
+
+    # convert datetime in grouped schedule to string
+    returned_schedule = {}
+    for day in grouped_schedule:
+        returned_schedule[day.strftime('%Y-%m-%d')] = grouped_schedule[day]
+    num_shifts, num_weekend_shifts = calculate_shift_stats(optimal_schedules[0])
+    points = {doctor: 0 for doctor in DOCTORS}
+    for day, doctor, points_value in optimal_schedules[0]:
+        points[doctor] += points_value
+    # Return the result as a JSON response
+    return {'schedule': returned_schedule, 'num_shifts': num_shifts, 'num_weekend_shifts': num_weekend_shifts,
+                    'points': points}
+
+
