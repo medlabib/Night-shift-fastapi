@@ -6,9 +6,18 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["POST", "GET"],
+    allow_headers=["*"],
+)
 
 class ScheduleInput(BaseModel):
     doctor_names: str
@@ -53,19 +62,16 @@ def schedule(data: ScheduleInput):
     # Constants
     DOCTORS = doctor_names.split(",")
     MAX_POINTS_DIFFERENCE = 1
-
+    score = float('inf')
     # Create a list of days in the scheduling period
     days = []
     current_date = start_date
     while current_date <= end_date:
         days.append(current_date)
         current_date += datetime.timedelta(days=1)
-
-    day_indices = {day: i for i, day in enumerate(days)}
-
     if same_num_doctors != "Y":
-        for day in days:
-            num_doctors_per_night = data.num_doctors_per_night
+        # num_doctors_per_night is a [list] of number of doctors for each night, e.g. [2, 3, 2, 3, 2, 3, 2], num_doctors_per_night is originally a dict {day: num_doctors }
+        num_doctors_per_night+= [int(data.num_doctors_per_night[day]) for day in data.num_doctors_per_night]
 
     # Create a dictionary with points for each day
     points_per_day = {}
@@ -81,7 +87,6 @@ def schedule(data: ScheduleInput):
 
     # Call the existing function to retrieve the other user inputs
     # Perform scheduling logic
-    provided_informations = [start_date, end_date, same_num_doctors, num_doctors_per_night, holiday_days, find]
     num_doctors = len(DOCTORS)
 
     # Other constants
@@ -103,7 +108,6 @@ def schedule(data: ScheduleInput):
     # Initialize variables
     best_difference = float('inf')
     best_schedules = []
-
     # Use pandas date_range to generate a list of days
     days = pd.date_range(start_date, end_date)
     for i in range(find):
@@ -167,8 +171,10 @@ def schedule(data: ScheduleInput):
         if total_difference < min_difference_in_points:
             min_difference_in_points = total_difference
             optimal_schedules = [schedule]
+            score = total_difference
         elif total_difference == min_difference_in_points:
             optimal_schedules.append(schedule)
+
     # Add your scheduling logic here
     if len(optimal_schedules) > 0:
         # Group the schedule by days
@@ -188,6 +194,6 @@ def schedule(data: ScheduleInput):
         points[doctor] += points_value
     # Return the result as a JSON response
     return {'schedule': returned_schedule, 'num_shifts': num_shifts, 'num_weekend_shifts': num_weekend_shifts,
-                    'points': points}
+                    'points': points, 'score': score}
 
 
