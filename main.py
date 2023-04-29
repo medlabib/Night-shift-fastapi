@@ -6,8 +6,11 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-
+import json
+import sqlite3
+import uuid
 
 app = FastAPI()
 
@@ -58,7 +61,7 @@ def schedule(data: ScheduleInput):
         holidays = [parse_date(day) for day in holiday_days.split(",")]
     else:
         holidays = []
-
+     
     # Constants
     DOCTORS = doctor_names.split(",")
     MAX_POINTS_DIFFERENCE = 1
@@ -88,7 +91,8 @@ def schedule(data: ScheduleInput):
     # Call the existing function to retrieve the other user inputs
     # Perform scheduling logic
     num_doctors = len(DOCTORS)
-
+    # transform data to json
+    data_json = [data.start_date, data.end_date, num_doctors, data.doctor_names,data.same_num_doctors, data.holiday_days, data.num_doctors_per_night, data.find]
     # Other constants
     def assign_shift(day, doctor, points_value):
         schedule.append((day, doctor, points_value))
@@ -110,6 +114,7 @@ def schedule(data: ScheduleInput):
     best_schedules = []
     # Use pandas date_range to generate a list of days
     days = pd.date_range(start_date, end_date)
+
     for i in range(find):
         schedule = []
         points = {doctor: 0 for doctor in DOCTORS}
@@ -143,6 +148,7 @@ def schedule(data: ScheduleInput):
     min_difference_in_points = float('inf')
 
     # Loop through the best schedules and apply the logic to find the optimal schedules
+    # make the for loop below into a function
     for schedule in best_schedules:
         num_shifts, num_weekend_shifts = calculate_shift_stats(schedule)
 
@@ -192,8 +198,48 @@ def schedule(data: ScheduleInput):
     points = {doctor: 0 for doctor in DOCTORS}
     for day, doctor, points_value in optimal_schedules[0]:
         points[doctor] += points_value
+    # save schedule to sqlite using uuid    
+    schedule_id = uuid.uuid4()
+    schedule_name = "Schedule " + str(schedule_id)
+    schedule_name = schedule_name.replace(" ","")
+    schedule_name = schedule_name.replace("-","")
+    # create an sqlite db
+    db = sqlite3.connect('schedule.db')
+    # create a cursor
+    c = db.cursor()
+    # create a table for the schedule with rows for stats
+    c.execute("CREATE TABLE IF NOT EXISTS schedule(name TEXT, parameters TEXT, schedule TEXT, points TEXT, shift_difference TEXT, weekend_shift_difference TEXT, num_shifts INT, num_weekend_shifts INT, score FLOAT)")
+    # insert the schedule into the table
+    c.execute("INSERT INTO schedule VALUES (?, ?, ?, ?, ?, ?,?,?,?)", (schedule_name, json.dumps(data_json), json.dumps(returned_schedule) , json.dumps(points), shift_difference, weekend_shift_difference, json.dumps(num_shifts), json.dumps(num_weekend_shifts), score))
+    # commit changes
+    db.commit()
+    # close the connection
+    db.close()
     # Return the result as a JSON response
     return {'schedule': returned_schedule, 'num_shifts': num_shifts, 'num_weekend_shifts': num_weekend_shifts,
-                    'points': points, 'score': score}
+                    'points': points, 'score': score, 'schedule_name':schedule_name}
 
+#add a route to get schedule by schedule name
+@app.get('/result/{name}')
+def get_schedule(name):
+    # get the schedule from the database
+    print(name)
+    db = sqlite3.connect('schedule.db')
+    c = db.cursor()
+    c.execute("SELECT * FROM schedule WHERE name = ?", (name,))
+    schedule = c.fetchone()
+    # close the connection
+    db.close()
+    # convert schedule to same format the /schedule outputs
+    schedule_json = json.loads(schedule[2])
+    num_shifts_json = json.loads(schedule[6])
+    num_weekend_shifts_json = json.loads(schedule[7])
+    score = schedule[8]
+    points_json = json.loads(schedule[3])
+    # return the schedule as json
+    return {'schedule': schedule_json, 'num_shifts':num_shifts_json, 'num_weekend_shifts': num_weekend_shifts_json,'points': points_json, 'score': score}
+ 
+
+
+    
 
