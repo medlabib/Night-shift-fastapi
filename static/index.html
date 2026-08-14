@@ -43,6 +43,9 @@
     </span>
   </div>
   <div class="appbar-actions">
+    <select id="departmentPicker" class="dep-picker" hidden aria-label="Department"></select>
+    <button class="btn btn-ghost btn-sm" id="signInBtn">Sign in</button>
+    <button class="btn btn-ghost btn-sm" id="accountBtn" hidden></button>
     <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings"><svg><use href="#i-cog"/></svg></button>
     <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"><svg><use href="#i-sun"/></svg></button>
   </div>
@@ -273,6 +276,43 @@
       <button class="btn btn-ghost" value="cancel">Close</button>
       <button class="btn btn-primary" id="saveSettings" value="save">Save</button>
     </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="authModal">
+  <form class="modal-inner" id="authForm">
+    <h3 id="authTitle">Sign in</h3>
+    <p class="hint" id="authBlurb">
+      Signing in saves your roster and rotas, and unlocks editing, PDF export and share links.
+    </p>
+
+    <label class="field" id="authNameField" hidden>
+      <span>Your name</span>
+      <input type="text" id="authName" autocomplete="name">
+    </label>
+    <label class="field">
+      <span>Email</span>
+      <input type="email" id="authEmail" autocomplete="email" required>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" id="authPassword" autocomplete="current-password" required>
+    </label>
+    <label class="field" id="authDeptField" hidden>
+      <span>Department name</span>
+      <input type="text" id="authDept" placeholder="e.g. Emergency Medicine">
+    </label>
+
+    <p class="auth-error" id="authError" hidden></p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="authCancel">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="authSubmit">Sign in</button>
+    </div>
+    <p class="hint auth-switch">
+      <span id="authSwitchText">No account yet?</span>
+      <button type="button" class="link-btn" id="authSwitch">Create one</button>
+    </p>
   </form>
 </dialog>
 

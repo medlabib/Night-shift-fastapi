@@ -120,6 +120,24 @@ they count, and are **soft** — they only break ties between rotas that are alr
 so a learned preference can never cost coverage or breach leave. `GET .../preferences`
 returns each weight with a plain-English explanation, and `DELETE` forgets everything.
 
+## The studio
+
+The frontend runs in two modes, so an account adds persistence rather than gating entry.
+
+**Signed out** it talks to the public `/schedule` endpoint and keeps the roster in
+localStorage. You can build a department, model the constraints and generate a rota in
+about ten seconds, with no account. Nothing is saved server-side.
+
+**Signed in** everything moves to the server and belongs to a department. A roster built
+while signed out is carried across on first sign-in rather than discarded. Rotas are saved
+and listed, the calendar becomes editable, and PDF export and share links appear.
+
+Click anyone on the calendar to take them off that night, pin them to it, or swap them for
+a colleague — the menu marks anyone who is on leave. Pinned nights survive **Re-tune**,
+which re-solves everything else while paying a penalty for moving what people have already
+seen. Every edit is checked server-side against the same rules the solver enforces, and the
+verdict sits above the calendar.
+
 ## API
 
 Everything under `/api` needs a session cookie, obtained from signup or login.
