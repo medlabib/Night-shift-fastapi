@@ -84,6 +84,10 @@ def schedule(data: ScheduleInput) -> dict:
         weights=dict(DEFAULT_WEIGHTS),
         unavailable=unavailable,
         min_rest_nights=1,
+        # The old engine happily produced every-other-night runs; callers of
+        # the legacy route get the same protection as everyone else.
+        max_shifts_per_window=2,
+        spread_window_nights=7,
         time_limit=settings.solver_time_limit,
         workers=settings.solver_workers,
     )

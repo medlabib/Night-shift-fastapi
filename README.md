@@ -35,11 +35,24 @@ rather than sampling random rotas and keeping the least-bad one.
 - exact nightly coverage, per grade when the department is graded
 - booked leave is never worked
 - a configurable minimum rest between shifts (`min_rest_nights`, default 1)
+- a ceiling on how dense a stretch may get (`max_shifts_per_window`, default 2
+  shifts in any `spread_window_nights`, default 7)
 - assignments a coordinator has pinned stay pinned
 
 **Optimised, in priority order:** an even points split, then even weekend load, then even
-shift counts, then learned preferences — measured *within* each grade, since comparing a
-consultant's load to a resident's is meaningless when each tier is staffed separately.
+shift counts, then evenly spaced nights, then learned preferences — measured *within* each
+grade, since comparing a consultant's load to a resident's is meaningless when each tier is
+staffed separately.
+
+### Why spacing is a rule of its own
+
+A minimum rest gap is not enough on its own. Obeying "one night off" at every step still
+permits working the 2nd, 4th, 6th, 8th and 10th and nothing for the rest of the month —
+legal at each individual step, punishing as a block, and exactly what a rota coordinator
+objects to. Two things prevent it: a hard cap on shifts per rolling window, and an
+objective term that costs every extra shift inside that window, so among rotas with
+identical totals the solver prefers the one that spreads them out. Without the second, the
+totals tie and the choice is arbitrary.
 
 Point weights: weekdays 1.0, Saturdays 1.5, Sundays and public holidays 2.0. Departments
 can override them.
@@ -126,9 +139,10 @@ DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/nightshift_test" \
 SECRET_KEY=test pytest -q
 ```
 
-29 tests covering auth flows, authorisation boundaries, solver constraints against
+31 tests covering auth flows, authorisation boundaries, solver constraints against
 known-feasible and known-impossible cases, editing and validation, preference learning,
-every PDF layout, share-link access and revocation, and legacy API compatibility.
+every PDF layout, share-link access and revocation, shift-spacing limits, and legacy API
+compatibility.
 
 ## Layout
 

@@ -66,6 +66,11 @@ class RotaRequest:
 
     # Nights of rest required between two shifts. 1 forbids back-to-back nights.
     min_rest_nights: int = 1
+    # A minimum gap alone still permits working every other night for a
+    # fortnight, so shift density is capped over a rolling window as well:
+    # at most `max_shifts_per_window` shifts in any `spread_window_nights`.
+    max_shifts_per_window: int = 2
+    spread_window_nights: int = 7
     max_shifts: dict[str, int] = field(default_factory=dict)
 
     # Pinned assignments kept as-is during a fine-tune re-solve: {doctor_id: {dates}}

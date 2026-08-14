@@ -49,6 +49,8 @@ def _config(body: GenerateIn) -> dict:
         "holidays": [d.isoformat() for d in body.holidays],
         "weights": body.weights,
         "min_rest_nights": body.min_rest_nights,
+        "max_shifts_per_window": body.max_shifts_per_window,
+        "spread_window_nights": body.spread_window_nights,
         "doctor_ids": [str(x) for x in (body.doctor_ids or [])],
     }
 

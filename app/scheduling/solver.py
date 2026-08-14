@@ -29,6 +29,9 @@ W_POINTS_SPREAD = 100
 W_WEEKEND_SPREAD = 40
 W_SHIFT_SPREAD = 25
 W_PREFERENCE = 8
+# Crowding costs more than a preference but less than raw fairness: a rota
+# should be even *and* readable, with fairness still winning outright.
+W_SPREAD = 30
 W_SHORTFALL = 10_000  # only used in the relaxed pass
 
 
@@ -97,17 +100,54 @@ class _Model:
                 cover(day, list(req.doctors), req.required_on(day), None)
 
     def _rest(self) -> None:
-        """At most one shift in any window of `min_rest_nights + 1` nights."""
+        """Rest between shifts, and a ceiling on how dense a stretch may get.
+
+        The minimum gap on its own is not enough: obeying "one night off" to
+        the letter still allows working every other night for a fortnight. The
+        rolling cap is what actually rules that out.
+        """
         req, model = self.req, self.model
+
         window = max(0, int(req.min_rest_nights)) + 1
-        if window < 2:
-            return
+        if window >= 2:
+            for doc in req.doctors:
+                for i in range(len(self.days)):
+                    chunk = self.days[i : i + window]
+                    if len(chunk) < 2:
+                        break
+                    model.AddAtMostOne(self.x[doc.id, day] for day in chunk)
+
+        span = max(0, int(req.spread_window_nights))
+        cap = max(1, int(req.max_shifts_per_window))
+        if span >= 2:
+            for doc in req.doctors:
+                for i in range(len(self.days)):
+                    chunk = self.days[i : i + span]
+                    if len(chunk) <= cap:
+                        break
+                    model.Add(sum(self.x[doc.id, day] for day in chunk) <= cap)
+
+    def _spread_terms(self) -> list:
+        """Reward rotas that space a doctor's nights out evenly.
+
+        Without this the solver has no reason to prefer 2/9/16/23 over
+        2/4/6/8: the totals are identical, so it picks arbitrarily and the
+        result reads as a punishing run. Each shift beyond the first inside a
+        rolling window costs something, which pushes them apart.
+        """
+        req, model = self.req, self.model
+        span = max(0, int(req.spread_window_nights))
+        if span < 2:
+            return []
+
+        terms = []
         for doc in req.doctors:
-            for i in range(len(self.days)):
-                chunk = self.days[i : i + window]
-                if len(chunk) < 2:
-                    break
-                model.AddAtMostOne(self.x[doc.id, day] for day in chunk)
+            for i in range(len(self.days) - span + 1):
+                chunk = self.days[i : i + span]
+                excess = model.NewIntVar(0, len(chunk), f"crowd_{doc.id}_{i}")
+                model.Add(excess >= sum(self.x[doc.id, day] for day in chunk) - 1)
+                terms.append(W_SPREAD * excess)
+        return terms
 
     def _caps(self) -> None:
         req, model = self.req, self.model
@@ -151,6 +191,7 @@ class _Model:
             terms.append(W_SHIFT_SPREAD * self._spread(
                 [sum(shifts[d.id]) for d in group], f"shf{gi}", len(self.days)))
 
+        terms += self._spread_terms()
         terms += self._preference_terms()
         terms += self._change_terms()
 
@@ -360,18 +401,32 @@ def structural_blockers(req: RotaRequest) -> list[str]:
             )
             continue
 
-        # With R nights of rest nobody can work more often than every (R+1)th
-        # night, capping what the whole group can cover over the period.
-        window = max(1, req.min_rest_nights + 1)
-        capacity = len(pool) * len(req.days) / window
+        # Two limits bound how often one doctor can work: the rest gap, and
+        # the rolling density cap. Whichever bites harder sets the ceiling.
+        rest_rate = 1 / max(1, req.min_rest_nights + 1)
+        density_rate = (
+            req.max_shifts_per_window / req.spread_window_nights
+            if req.spread_window_nights >= 2 else 1.0
+        )
+        binding = min(rest_rate, density_rate)
+        capacity = len(pool) * len(req.days) * binding
         demand = sum(
             (req.required_for(d, grade) if grade else req.required_on(d)) for d in req.days
         )
         if demand > capacity:
+            if density_rate < rest_rate:
+                cause = (
+                    f"at most {req.max_shifts_per_window} shift(s) in any "
+                    f"{req.spread_window_nights} nights"
+                )
+                remedy = "raise the shifts-per-window cap"
+            else:
+                cause = f"{req.min_rest_nights} night(s) of rest between shifts"
+                remedy = "shorten the rest requirement"
             blockers.append(
-                f"{label}{demand} shifts are needed but {len(pool)} doctors resting "
-                f"{req.min_rest_nights} night(s) between shifts can cover at most "
-                f"{capacity:.0f}. Add doctors, shorten the rest requirement, or lower coverage."
+                f"{label}{demand} shifts are needed but {len(pool)} doctors working "
+                f"{cause} can cover at most {capacity:.0f}. Add doctors, {remedy}, "
+                f"or lower coverage."
             )
 
     return blockers

@@ -133,6 +133,10 @@ class GenerateIn(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)
 
     min_rest_nights: int = Field(default=1, ge=0, le=14)
+    # A minimum gap alone still allows every-other-night runs, so density is
+    # capped over a rolling window too.
+    max_shifts_per_window: int = Field(default=2, ge=1, le=14)
+    spread_window_nights: int = Field(default=7, ge=0, le=28)
     doctor_ids: list[uuid.UUID] | None = None
     use_preferences: bool = True
     time_limit: float | None = Field(default=None, gt=0, le=120)

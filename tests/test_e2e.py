@@ -543,3 +543,55 @@ def test_preferences_can_be_audited_and_cleared(client):
 
 def _days():
     return [START + dt.timedelta(days=i) for i in range((END - START).days + 1)]
+
+
+def test_no_doctor_gets_an_every_other_night_run(client):
+    """A minimum rest gap alone permits shift/rest/shift/rest for a fortnight.
+
+    That pattern obeys the rule at every individual step and is still
+    punishing, so density is capped over a rolling window as well.
+    """
+    account = signup(client, email="spacing@hospital.org")
+    department_id = account["departments"][0]["id"]
+    roster(client, department_id, names=NAMES + ["Kwame Mensah", "Lena Vogt"])
+
+    body = client.post(f"/api/departments/{department_id}/schedules", json={
+        "start_date": START.isoformat(), "end_date": dt.date(2026, 9, 30).isoformat(),
+        "coverage": 2, "min_rest_nights": 1,
+        "max_shifts_per_window": 2, "spread_window_nights": 7,
+    }).json()
+
+    per_doctor: dict[str, list[dt.date]] = {}
+    for row in body["assignments"]:
+        per_doctor.setdefault(row["doctor_id"], []).append(dt.date.fromisoformat(row["date"]))
+
+    for doctor_id, days in per_doctor.items():
+        ordered = sorted(days)
+        # No more than 2 shifts inside any 7-night window.
+        for i in range(len(ordered) - 2):
+            window = ordered[i:i + 3]
+            assert (window[-1] - window[0]).days >= 7, (
+                f"{doctor_id} works {[d.isoformat() for d in window]} "
+                "— three shifts inside a week"
+            )
+        # And no repeated tight gaps, which is the pattern people notice.
+        gaps = [(b - a).days for a, b in zip(ordered, ordered[1:])]
+        assert sum(1 for g in gaps if g <= 2) <= 1, f"{doctor_id} has a tight run: {gaps}"
+
+    assert body["metrics"]["coverage"] == 100.0, "spacing must not cost coverage"
+
+
+def test_spacing_cap_is_explained_when_it_cannot_be_met(client):
+    account = signup(client, email="dense@hospital.org")
+    department_id = account["departments"][0]["id"]
+    roster(client, department_id, names=NAMES[:4])
+
+    # 4 doctors, 2 a night, capped at 1 shift per 7 nights is impossible.
+    res = client.post(f"/api/departments/{department_id}/schedules", json={
+        "start_date": START.isoformat(), "end_date": END.isoformat(),
+        "coverage": 2, "max_shifts_per_window": 1, "spread_window_nights": 7,
+    })
+    assert res.status_code == 422
+    reasons = " ".join(res.json()["detail"]["reasons"])
+    assert "in any 7 nights" in reasons
+    assert "raise the shifts-per-window cap" in reasons

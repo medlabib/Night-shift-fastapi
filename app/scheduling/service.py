@@ -85,6 +85,8 @@ def build_request(
         weights={**DEFAULT_WEIGHTS, **(config.get("weights") or {})},
         unavailable=leave,
         min_rest_nights=int(config.get("min_rest_nights", 1)),
+        max_shifts_per_window=int(config.get("max_shifts_per_window", 2)),
+        spread_window_nights=int(config.get("spread_window_nights", 7)),
         locked=locked or {},
         anchor=anchor,
         change_penalty=change_penalty,
@@ -235,6 +237,20 @@ def validate(db: Session, schedule: Schedule) -> ValidationOut:
                     f"{name} works {a:%a %d %b} and {b:%a %d %b} with "
                     f"{gap - 1} night(s) of rest between them."
                 )
+
+        # A run of merely-legal gaps is the thing coordinators actually object
+        # to: a shift every other night for a fortnight obeys the minimum rest
+        # at every step and is still punishing.
+        span, cap = req.spread_window_nights, req.max_shifts_per_window
+        if span >= 2 and len(ordered) > cap:
+            for i in range(len(ordered) - cap):
+                window = ordered[i : i + cap + 1]
+                if (window[-1] - window[0]).days < span:
+                    warnings.append(
+                        f"{name} works {len(window)} nights between {window[0]:%a %d %b} "
+                        f"and {window[-1]:%a %d %b} — more than {cap} in {span} nights."
+                    )
+                    break
 
     for day in req.days:
         on_call = by_night.get(day, [])
