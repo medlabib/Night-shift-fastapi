@@ -92,11 +92,27 @@ const icon = (id, cls = '') => {
 const initials = (name) => name.replace(/(dr\.?|prof\.?|mr\.?|ms\.?|mrs\.?)/gi, '').trim()
   .split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || '?';
 
-/** Evenly-spaced hues (golden angle) keep adjacent doctors visually distinct. */
-function colorFor(index) {
-  const hue = Math.round((index * 137.508) % 360);
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return `hsl(${hue} ${dark ? '72% 66%' : '65% 46%'})`;
+/**
+ * Grades get colour; individual doctors do not.
+ *
+ * A rota can hold twenty doctors, and no palette stays distinguishable that
+ * far — the old golden-angle rainbow generated hues that collided under
+ * colour-vision deficiency and carried no meaning anyway, since every chip
+ * already shows the name. Colour is reserved for state (weekend, holiday,
+ * shortfall, conflict) and for the doctor currently focused. Grades are a
+ * genuinely categorical set, small enough to validate, so they keep hues.
+ */
+const GRADE_SLOTS = ['var(--cat-1)', 'var(--cat-2)', 'var(--cat-3)', 'var(--cat-4)'];
+
+function gradeColor(grade) {
+  const index = state.grades.indexOf(grade);
+  // Past the validated slots, fall back to ink rather than inventing a hue.
+  return index >= 0 && index < GRADE_SLOTS.length ? GRADE_SLOTS[index] : 'var(--text-faint)';
+}
+
+/** Initials tiles read as identity without needing a unique colour each. */
+function avatarStyle() {
+  return 'background:var(--surface-3);color:var(--text-dim)';
 }
 
 const fmt = (n, dp = 1) => {
@@ -183,8 +199,6 @@ function recordPerf(units, seconds) {
 
 const days = () => eachDay(state.startDate, state.endDate);
 const doctorNames = () => state.doctors.map((d) => d.name);
-const colorMap = () => Object.fromEntries(state.doctors.map((d, i) => [d.name, colorFor(i)]));
-const gradeColor = (grade) => colorFor(state.grades.indexOf(grade) * 3 + 1);
 
 const requiredOn = (iso) => (state.coverage === 'same'
   ? Number(state.perNight) || 0
@@ -392,7 +406,6 @@ function renderPreflight() {
 
 function renderRoster() {
   const host = $('#doctorList');
-  const colors = colorMap();
   const scroll = host.scrollTop;
 
   if (!state.doctors.length) {
@@ -401,7 +414,7 @@ function renderRoster() {
     host.replaceChildren(...state.doctors.map((doc) => {
       const offCount = state.unavailable[doc.name]?.size || 0;
       const row = el('div', { class: `doc-row${offCount ? ' has-blackout' : ''}` },
-        el('div', { class: 'avatar', style: `background:${colors[doc.name]}` }, initials(doc.name)),
+        el('div', { class: 'avatar', style: avatarStyle() }, initials(doc.name)),
         el('div', { class: 'doc-name', title: doc.name }, doc.name),
         offCount ? el('span', { class: 'doc-badge', title: `${offCount} nights unavailable` }, `${offCount} off`) : null,
       );
@@ -1065,7 +1078,6 @@ function statStrip() {
 function renderCalendarPane() {
   const pane = $('#pane-calendar');
   const a = state.result.analysis;
-  const colors = colorMap();
   const gradeOf = Object.fromEntries(state.doctors.map((d) => [d.name, d.grade || '']));
 
   const actions = [
@@ -1076,12 +1088,13 @@ function renderCalendarPane() {
   const filter = el('div', { class: 'doc-filter' },
     ...state.doctors.map((doc) => el('button', {
       class: `df-chip${state.focusDoctor === doc.name ? ' is-on' : ''}`,
+      title: `Show only ${doc.name}'s nights`,
       onclick: () => { state.focusDoctor = state.focusDoctor === doc.name ? null : doc.name; renderCalendarPane(); },
-    }, el('i', { style: `background:${colors[doc.name]}` }), doc.name)));
+    }, doc.name)));
 
   const legend = el('div', { class: 'legend' },
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:color-mix(in srgb, var(--hol) 20%, var(--surface))' }), 'Holiday · 2.0'),
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--surface-2)' }), 'Weekend · 1.5 / 2.0'),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--holiday-bg);border-color:var(--holiday)' }), 'Holiday · 2.0'),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--weekend-bg)' }), 'Weekend · 1.5 / 2.0'),
     el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'border-color:var(--danger)' }), 'Understaffed night'),
     el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'box-shadow:inset 0 0 0 1px var(--warn)' }), 'Back-to-back night'),
   );
@@ -1122,9 +1135,12 @@ function renderCalendarPane() {
         const info = a.perDoctor.find((d) => d.name === entry.name);
         const chip = el('div', {
           class: 'cal-doc',
-          style: `--dc:${colors[entry.name] || 'var(--accent)'}`,
           title: `${entry.name}${gradeOf[entry.name] ? ` · ${gradeOf[entry.name]}` : ''} · ${fmt(entry.points)} pts`,
-        }, el('span', { class: 'cd-dot' }), el('span', { class: 'cd-name' }, entry.name));
+        }, el('span', { class: 'cd-name' }, entry.name),
+          state.graded && gradeOf[entry.name]
+            ? el('span', { class: 'cd-grade', style: `color:${gradeColor(gradeOf[entry.name])}` },
+                gradeOf[entry.name])
+            : null);
 
         if (isOff(entry.name, night.iso)) chip.classList.add('is-violation');
         if (info && (info.dates.includes(addDays(night.iso, 1)) || info.dates.includes(addDays(night.iso, -1)))) {
@@ -1152,27 +1168,25 @@ function renderCalendarPane() {
   pane.replaceChildren(resultHeader(actions), statStrip(), legend, filter, months);
 }
 
-function bar(label, color, value, max, extra = {}) {
-  return el('div', { class: `bar-row ${extra.cls || ''}` },
-    el('div', { class: 'bl' }, el('i', { style: `background:${color}` }), el('span', { title: label }, label)),
+/** One measure across doctors, so one hue — rank is read from length. */
+function bar(label, value, max, extra = {}) {
+  return el('div', { class: 'bar-row' },
+    el('div', { class: 'bl' }, el('span', { title: label }, label)),
     el('div', { class: 'bar-track' },
-      el('div', { class: 'bar-fill', style: `--dc:${color};width:${max ? (value / max) * 100 : 0}%` })),
-    el('div', { class: 'bar-val' }, extra.valueText ?? fmt(value)));
+      el('div', { class: 'bar-fill', style: `width:${max ? (value / max) * 100 : 0}%` })),
+    el('div', { class: 'bar-val' }, extra.valueText ?? fmt(value),
+      extra.note ? el('span', { class: 'bar-note' }, extra.note) : null));
 }
 
 function renderFairnessPane() {
   const pane = $('#pane-fairness');
   const a = state.result.analysis;
-  const colors = colorMap();
 
   /* Balance gauge */
   const r = 50, circ = 2 * Math.PI * r;
   const gauge = el('div', { class: 'gauge' });
   gauge.innerHTML = `
     <svg viewBox="0 0 120 120">
-      <defs><linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="var(--accent-3)"/><stop offset="100%" stop-color="var(--accent-2)"/>
-      </linearGradient></defs>
       <circle class="track" cx="60" cy="60" r="${r}"/>
       <circle class="val" cx="60" cy="60" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="${circ}"/>
     </svg>
@@ -1201,8 +1215,8 @@ function renderFairnessPane() {
   const pointsPanel = el('div', { class: 'panel' },
     el('h3', {}, icon('i-users'), 'Load per doctor'),
     el('div', { class: 'panel-sub' }, 'Total points earned across the period'),
-    el('div', { class: 'bars' }, ...sortedByPoints.map((d) => bar(d.name, colors[d.name], d.points, maxPts, {
-      cls: d.points === maxPts ? 'is-high' : d.points === Math.min(...a.perDoctor.map((x) => x.points)) ? 'is-low' : '',
+    el('div', { class: 'bars' }, ...sortedByPoints.map((d, i) => bar(d.name, d.points, maxPts, {
+      note: i === 0 ? 'heaviest' : i === sortedByPoints.length - 1 ? 'lightest' : '',
     }))));
 
   /* Weekend bars */
@@ -1211,7 +1225,7 @@ function renderFairnessPane() {
     el('h3', {}, icon('i-calendar'), 'Weekend & holiday duty'),
     el('div', { class: 'panel-sub' }, 'The nights people actually count'),
     el('div', { class: 'bars' }, ...[...a.perDoctor].sort((x, y) => y.weekendShifts - x.weekendShifts).map((d) =>
-      bar(d.name, colors[d.name], d.weekendShifts, maxWe, {
+      bar(d.name, d.weekendShifts, maxWe, {
         valueText: `${d.weekendShifts}${d.holidayShifts ? ` +${d.holidayShifts}h` : ''}`,
       }))));
 
@@ -1219,9 +1233,9 @@ function renderFairnessPane() {
   const list = days();
   const stripPanel = el('div', { class: 'panel', style: 'grid-column:1/-1' },
     el('h3', {}, icon('i-spark'), 'Rhythm'),
-    el('div', { class: 'panel-sub' }, 'One block per night. Solid = on call, muted = weekend, orange = holiday, hatched = booked leave, ringed = back-to-back.'),
+    el('div', { class: 'panel-sub' }, 'One block per night. Filled = on call, dimmed = weekend, amber = holiday, hatched = booked leave, ringed = back-to-back.'),
     el('div', { class: 'strip-rows' }, ...a.perDoctor.map((d) => {
-      const strip = el('div', { class: 'strip', style: `--dc:${colors[d.name]}` });
+      const strip = el('div', { class: 'strip' });
       for (const iso of list) {
         const on = d.dates.includes(iso);
         const b = el('b', { title: `${prettyDate(iso)}${on ? ' · on call' : isOff(d.name, iso) ? ' · leave' : ''}` });
@@ -1234,16 +1248,21 @@ function renderFairnessPane() {
         strip.append(b);
       }
       return el('div', { class: 'strip-row' },
-        el('div', { class: 'sl' }, el('i', { style: `background:${colors[d.name]}` }), el('span', { title: d.name }, d.name)),
+        el('div', { class: 'sl' }, el('span', { title: d.name }, d.name)),
         strip);
     })));
 
   /* Table */
   const rows = a.perDoctor.map((d) => el('tr', {},
     el('td', {}, el('div', { class: 'cell-doc' },
-      el('div', { class: 'avatar', style: `background:${colors[d.name]};width:22px;height:22px;font-size:9px` }, initials(d.name)),
+      el('div', { class: 'avatar', style: `${avatarStyle()};width:22px;height:22px;font-size:9px` }, initials(d.name)),
       d.name)),
-    state.graded ? el('td', {}, el('span', { class: 'tag' }, d.grade || '—')) : null,
+    state.graded
+      ? el('td', {}, el('span', {
+          class: 'tag',
+          style: d.grade ? `color:${gradeColor(d.grade)}` : '',
+        }, d.grade || '—'))
+      : null,
     el('td', { class: 'num' }, String(d.shifts)),
     el('td', { class: 'num' }, String(d.weekendShifts)),
     el('td', { class: 'num' }, String(d.holidayShifts)),
