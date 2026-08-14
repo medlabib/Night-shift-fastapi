@@ -1,0 +1,30 @@
+{% extends "pdf/base.html" %}
+{# One row per night. The default: reads like a diary, prints on A4 portrait. #}
+{% block content %}
+<table>
+  <thead>
+    <tr>
+      <th style="width:14%">Date</th>
+      <th style="width:10%">Day</th>
+      <th style="width:8%" class="center">Pts</th>
+      <th>On call</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for night in nights %}
+    <tr class="{% if night.holiday %}holiday{% elif night.weekend %}weekend{% endif %}">
+      <td><b>{{ night.date.strftime('%d %b') }}</b></td>
+      <td class="muted">{{ night.date.strftime('%a') }}{% if night.holiday %} ·&nbsp;hol{% endif %}</td>
+      <td class="center"><span class="weight">{{ night.weight }}</span></td>
+      <td>
+        {% if night.doctors %}
+          {% for d in night.doctors %}{{ d.doctor_name }}{% if d.grade %}<span class="muted"> ({{ d.grade }})</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
+        {% else %}
+          <span class="muted">— nobody on call —</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

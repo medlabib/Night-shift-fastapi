@@ -21,3 +21,6 @@ venv
 .venv
 docs.zip
 archive.zip
+# Local Postgres data and env
+.env
+pgdata/

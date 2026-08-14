@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nightshift}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nightshift}
+      POSTGRES_DB: ${POSTGRES_DB:-nightshift}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The app waits for this, so migrations never race an unready database.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nightshift} -d ${POSTGRES_DB:-nightshift}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nightshift}:${POSTGRES_PASSWORD:-nightshift}@db:5432/${POSTGRES_DB:-nightshift}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env - sessions and share links are signed with it}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SOLVER_TIME_LIMIT: ${SOLVER_TIME_LIMIT:-10}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
