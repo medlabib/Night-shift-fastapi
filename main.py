@@ -1,4 +1,5 @@
 import datetime
+import os
 import random
 import uuid
 from collections import defaultdict
@@ -6,11 +7,24 @@ from typing import List, Dict, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-app = FastAPI()
+app = FastAPI(title="Night Shift", description="Fair night-shift rotas for hospital departments.")
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# Raised to the client when the random search cannot produce a usable rota,
+# which in practice always comes down to too few selectable doctors per night.
+UNFILLABLE = (
+    "No rota could be built from these rules. This usually means too many doctors "
+    "are requested per night for the roster: the engine benches recently-worked "
+    "doctors, so only about a third of the roster is selectable on any night. "
+    "Try fewer doctors per night, a larger roster, or fewer blackout days."
+)
 
 
 def parse_date(date_str):
@@ -44,6 +58,16 @@ class ScheduleInput(BaseModel):
 
 @app.post("/schedule")
 async def schedule(data: ScheduleInput):
+    """Build a rota, translating an impossible request into a readable 422."""
+    try:
+        return await build_schedule(data)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail=UNFILLABLE)
+
+
+async def build_schedule(data: ScheduleInput):
     doctor_names = data.doctor_names
     start_date = datetime.datetime.strptime(data.start_date, "%Y-%m-%d").date()
     end_date = datetime.datetime.strptime(data.end_date, "%Y-%m-%d").date()
@@ -376,3 +400,18 @@ async def schedule(data: ScheduleInput):
     schedule_name = "Schedule " + str(uuid.uuid4())
     return {'schedule': returned_schedule, 'points': doc_points, 'num_shifts': num_shifts,
             'num_weekend_shifts': num_weekend_shifts, 'schedule_name': schedule_name, 'score': score}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# The Rota Studio frontend is served by the same app, so it works from a plain
+# `uvicorn main:app` with no separate host or build step.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
