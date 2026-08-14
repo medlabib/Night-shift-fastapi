@@ -760,6 +760,7 @@ async function generate() {
 
     $('#emptyState').hidden = true;
     renderResult();
+    revealResults();
     toast('ok', 'Rota generated', `${analysis.assignedCount} shifts placed in ${fmt(elapsed)}s · balance ${fmt(analysis.balance, 0)}%`);
   } catch (err) {
     toast('err', 'Could not generate a rota', err.message);
@@ -1482,6 +1483,14 @@ function restoreRun(run) {
 }
 
 /* ─────────────────────────── tabs, toasts, chrome ─────────────────────────── */
+
+/** On a stacked (phone) layout the workspace sits below a tall config panel. */
+function revealResults() {
+  if (window.matchMedia('(min-width: 901px)').matches) return;
+  const tabs = $('#tabs');
+  if (tabs) tabs.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 
 function showTab(tab) {
   state.activeTab = tab;

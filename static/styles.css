@@ -338,7 +338,7 @@ select {
 .btn-lg { width: 100%; padding: 12px 18px; font-size: 14px; border-radius: 12px; }
 
 .link-btn {
-  background: none; border: none; padding: 0;
+  background: none; border: none; padding: 6px 0;
   color: var(--accent); font-size: 12px; cursor: pointer;
   border-bottom: 1px dashed transparent;
 }
@@ -350,7 +350,8 @@ select {
 
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip-btn {
-  padding: 5px 10px;
+  padding: 7px 12px;
+  min-height: 32px;
   font-size: 11.5px;
   border-radius: 100px;
   border: 1px solid var(--line);
@@ -419,14 +420,24 @@ select {
 .step-btn:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 
 /* Range */
-.range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 4px; background: var(--surface-3); padding: 0; border: none; }
+.range {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 28px; padding: 0; border: none;
+  background: transparent; cursor: pointer;
+}
+.range::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 4px; background: var(--surface-3);
+}
+.range::-moz-range-track {
+  height: 4px; border-radius: 4px; background: var(--surface-3);
+}
 .range::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--surface); cursor: pointer;
+  -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+  margin-top: -7px; cursor: pointer;
 }
 .range::-moz-range-thumb {
-  width: 15px; height: 15px; border-radius: 50%;
+  width: 16px; height: 16px; border-radius: 50%;
   background: var(--accent); border: 2px solid var(--surface); cursor: pointer;
 }
 .range-ticks { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-faint); margin-top: 2px; }
@@ -471,12 +482,17 @@ select {
   font-variant-numeric: tabular-nums;
 }
 .doc-del {
-  width: 22px; height: 22px; flex: none;
+  width: 32px; height: 32px; flex: none;
   border: none; background: transparent; color: var(--text-faint);
   border-radius: 6px; cursor: pointer; display: grid; place-items: center;
   opacity: 0; transition: all .15s;
 }
-.doc-row:hover .doc-del { opacity: 1; }
+.doc-row:hover .doc-del,
+.doc-del:focus-visible { opacity: 1; }
+/* Touch devices have no hover state, so the control would never appear. */
+@media (hover: none) {
+  .doc-del { opacity: 1; }
+}
 .doc-del:hover { color: var(--danger); background: var(--danger-soft); }
 .doc-del svg { width: 13px; height: 13px; }
 
@@ -736,7 +752,7 @@ select {
 .doc-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .df-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
+  padding: 6px 12px; min-height: 32px;
   border-radius: 100px; font-size: 11.5px;
   border: 1px solid var(--line); background: var(--surface-2);
   color: var(--text-dim); cursor: pointer; transition: all .14s;
@@ -958,7 +974,12 @@ pre.json .n { color: var(--text-dim); }
 }
 .run-elapsed { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 
-.toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 9px; z-index: 90; }
+.toasts {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 9px; z-index: 90;
+  pointer-events: none;
+}
+.toast { pointer-events: auto; }
 .toast {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 12px 15px;
@@ -1019,6 +1040,40 @@ pre.json .n { color: var(--text-dim); }
 @media (max-width: 560px) {
   .appbar-meta { display: none; }
   .pane { padding: 14px; }
+
+  /* Full-width toasts that sit above the sticky action bar, not over
+     the content the user just generated. */
+  .toasts {
+    left: var(--s2); right: var(--s2); bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .toast { max-width: none; }
+
+  /* Generate stays one tap away instead of scrolling off with the
+     config panel, which on a phone is several screens tall. */
+  .generate-dock {
+    position: fixed; inset: auto 0 0 0; z-index: 45;
+    margin: 0; padding: var(--s2) var(--s3) calc(var(--s2) + env(safe-area-inset-bottom, 0px));
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line);
+  }
+  .config-scroll { padding-bottom: var(--s4); }
+  .workspace-body { padding-bottom: 72px; }
+
+  /* Actions read as a row of equals rather than drifting right. */
+  .result-actions { margin-left: 0; width: 100%; }
+  .result-actions .btn { flex: 1; }
+  .result-head { gap: var(--s3); }
+
+  /* One scrollable row instead of a wall of chips. */
+  .doc-filter {
+    flex-wrap: nowrap; overflow-x: auto; padding-bottom: var(--s1);
+    scrollbar-width: none;
+  }
+  .doc-filter::-webkit-scrollbar { display: none; }
+  .df-chip { flex: none; }
+
+  .legend { gap: var(--s2) var(--s3); font-size: 10.5px; }
   .cal-grid { grid-template-columns: 1fr; }
   .cal-dow { display: none; }
   .cal-cell.is-blank { display: none; }
