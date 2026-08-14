@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night shift rota</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌙</text></svg>">
+<style>
+  /* A read-only page: no config panel, so the workspace takes the full width. */
+  .shared-wrap { max-width: 1180px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s8); }
+  .shared-head { display: flex; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s5); }
+  .shared-head h1 { font-size: var(--t-2xl); letter-spacing: -.02em; }
+  .shared-head .where { color: var(--text-dim); font-size: var(--t-md); margin-top: 2px; }
+  .shared-head .when { color: var(--text-faint); font-size: var(--t-sm); margin-top: var(--s1); }
+  .shared-actions { margin-left: auto; display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .read-only {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: var(--t-xs); color: var(--text-faint);
+    border: 1px solid var(--line); background: var(--surface-2);
+    padding: 3px 9px; border-radius: 100px;
+  }
+  .shared-state { text-align: center; padding: 18vh var(--s4); color: var(--text-dim); }
+  .shared-state h1 { font-size: var(--t-xl); margin-bottom: var(--s2); color: var(--text); }
+  @media (max-width: 560px) {
+    .shared-wrap { padding: var(--s3); }
+    .shared-actions { width: 100%; }
+    .shared-actions .btn { flex: 1; }
+  }
+</style>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+</svg>
+
+<div class="shared-wrap" id="root">
+  <div class="shared-state"><h1>Loading the rota…</h1></div>
+</div>
+
+<script type="module">
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+const token = location.pathname.split('/').filter(Boolean).pop();
+const root = document.getElementById('root');
+const dateOf = (iso) => new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+const fmtNum = (n) => (Number.isInteger(n) ? String(n) : Number(n).toFixed(1));
+
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === false || v === null || v === undefined) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'style') node.style.cssText = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return node;
+}
+
+const icon = (id) => {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+};
+
+function fail(title, detail) {
+  root.replaceChildren(el('div', { class: 'shared-state' },
+    el('h1', {}, title), el('p', {}, detail)));
+}
+
+function monthGrids(schedule, holidays) {
+  const byDate = new Map();
+  for (const row of schedule.assignments) {
+    if (!byDate.has(row.date)) byDate.set(row.date, []);
+    byDate.get(row.date).push(row);
+  }
+
+  const days = [];
+  for (let d = dateOf(schedule.start_date); d <= dateOf(schedule.end_date); d.setDate(d.getDate() + 1)) {
+    days.push(new Date(d));
+  }
+
+  const months = new Map();
+  for (const day of days) {
+    const key = `${day.getFullYear()}-${day.getMonth()}`;
+    if (!months.has(key)) months.set(key, []);
+    months.get(key).push(day);
+  }
+
+  const out = el('div', { class: 'months' });
+  for (const [, group] of months) {
+    const first = group[0];
+    const grid = el('div', { class: 'cal-grid' }, ...DOW.map((d) => el('div', { class: 'cal-dow' }, d)));
+    for (let i = 0; i < new Date(first.getFullYear(), first.getMonth(), 1).getDay(); i++) {
+      grid.append(el('div', { class: 'cal-cell is-blank' }));
+    }
+    for (let d = 1; d < first.getDate(); d++) grid.append(el('div', { class: 'cal-cell is-blank' }));
+
+    for (const day of group) {
+      const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      const rows = byDate.get(iso) || [];
+      const weekend = day.getDay() === 0 || day.getDay() === 6;
+      const holiday = holidays.has(iso);
+      const cell = el('div', {
+        class: `cal-cell${weekend ? ' is-weekend' : ''}${holiday ? ' is-holiday' : ''}`,
+      });
+      cell.append(el('div', { class: 'cal-head' },
+        el('span', { class: 'cal-num' }, String(day.getDate())),
+        el('span', { class: 'cal-w' }, rows.length ? fmtNum(rows[0].points) : '')));
+      const docs = el('div', { class: 'cal-docs' });
+      for (const row of rows) {
+        docs.append(el('div', { class: 'cal-doc' }, el('span', { class: 'cd-name' }, row.doctor_name)));
+      }
+      cell.append(docs);
+      grid.append(cell);
+    }
+
+    out.append(el('div', {},
+      el('div', { class: 'month-title' }, `${MONTHS[first.getMonth()]} ${first.getFullYear()}`),
+      grid));
+  }
+  return out;
+}
+
+function workload(metrics) {
+  const people = Object.values(metrics?.per_doctor || {}).filter((p) => p.shifts);
+  if (!people.length) return null;
+  people.sort((a, b) => b.points - a.points);
+
+  const rows = people.map((p) => el('tr', {},
+    el('td', {}, p.name),
+    el('td', { class: 'num' }, String(p.shifts)),
+    el('td', { class: 'num' }, String(p.weekend_shifts)),
+    el('td', { class: 'num' }, fmtNum(p.points))));
+
+  return el('div', { class: 'panel', style: 'margin-top:20px' },
+    el('h3', {}, 'Workload'),
+    el('div', { class: 'panel-sub' }, 'Weekdays 1.0 · Saturdays 1.5 · Sundays and holidays 2.0'),
+    el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+      el('thead', {}, el('tr', {},
+        el('th', {}, 'Doctor'),
+        el('th', { class: 'num' }, 'Shifts'),
+        el('th', { class: 'num' }, 'Weekend'),
+        el('th', { class: 'num' }, 'Points'))),
+      el('tbody', {}, ...rows))));
+}
+
+try {
+  const res = await fetch(`/api/shared/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    fail('This link is no longer available',
+      'It may have been revoked or expired. Ask whoever shared it for a new one.');
+  } else {
+    const data = await res.json();
+    const { schedule, department, focus_doctor: focus } = data;
+    const holidays = new Set(schedule.config?.holidays || []);
+    document.title = `${schedule.name} · ${department.name}`;
+
+    const start = dateOf(schedule.start_date);
+    const end = dateOf(schedule.end_date);
+    const period = `${start.getDate()} ${MONTHS[start.getMonth()].slice(0, 3)} – ` +
+      `${end.getDate()} ${MONTHS[end.getMonth()].slice(0, 3)} ${end.getFullYear()}`;
+
+    root.replaceChildren(
+      el('div', { class: 'shared-head' },
+        el('div', {},
+          el('h1', {}, focus ? `${focus} — night shifts` : schedule.name),
+          el('div', { class: 'where' },
+            department.name + (department.hospital ? ` · ${department.hospital}` : '')),
+          el('div', { class: 'when' }, `${period} · ${schedule.assignments.length} shifts`),
+          el('span', { class: 'read-only', style: 'margin-top:8px' }, 'Read-only shared view')),
+        el('div', { class: 'shared-actions' },
+          el('a', { class: 'btn btn-ghost', href: `/api/shared/${token}/ics` },
+            icon('i-calendar'), 'Add to calendar'),
+          el('a', { class: 'btn btn-ghost', href: `/api/shared/${token}/pdf?layout=calendar`, target: '_blank' },
+            icon('i-download'), 'PDF'),
+          el('button', { class: 'btn btn-primary', onclick: () => window.print() },
+            icon('i-print'), 'Print'))),
+      monthGrids(schedule, holidays),
+      focus ? null : workload(schedule.metrics));
+  }
+} catch (err) {
+  fail('Could not load this rota', err.message);
+}
+</script>
+</body>
+</html>

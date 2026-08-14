@@ -8,6 +8,8 @@
    asking for one, and audit whatever comes back.
    ============================================================ */
 
+import { api, ApiError } from '/static/api.js';
+
 const STORE_KEY = 'nightshift.studio.v1';
 const RUNS_KEY = 'nightshift.studio.runs.v1';
 const PERF_KEY = 'nightshift.studio.perf.v1';
@@ -148,7 +150,19 @@ const state = {
   result: null,                // { payload, response, analysis, meta }
   runs: [],
   focusDoctor: null,
+
+  // Signed in, everything lives on the server and belongs to a department.
+  // Signed out, the studio stays fully usable against the public endpoint.
+  session: null,
+  department: null,
+  departments: [],
+  serverSchedules: [],
+  scheduleId: null,            // the saved schedule currently open
+  validation: null,
+  authMode: 'login',
 };
+
+const signedIn = () => state.session !== null;
 
 /* ─────────────────────────── persistence ─────────────────────────── */
 
@@ -698,6 +712,9 @@ async function callApi(path, options) {
 async function generate() {
   const { ok } = preflight();
   if (!ok) return;
+  // Signed in, the rota is saved and becomes editable; signed out it is a
+  // one-off answer from the public endpoint.
+  if (signedIn() && state.department) return generateOnServer();
 
   const payload = buildPayload();
   const overlay = $('#runOverlay');
@@ -1081,10 +1098,27 @@ function renderCalendarPane() {
   const a = state.result.analysis;
   const gradeOf = Object.fromEntries(state.doctors.map((d) => [d.name, d.grade || '']));
 
-  const actions = [
+  const actions = [];
+  if (signedIn() && state.scheduleId) {
+    actions.push(el('button', {
+      class: 'btn btn-ghost',
+      title: 'Re-solve the nights you have not pinned, moving as little as possible',
+      onclick: async () => {
+        try {
+          const updated = await api.retune(state.department.id, state.scheduleId,
+            { keep_locked: true, stay_close: true });
+          adoptSchedule(updated);
+          await refreshValidation();
+          renderResult();
+          toast('ok', 'Re-tuned around your pinned nights');
+        } catch (err) { toast('err', 'Could not re-tune', err.message); }
+      },
+    }, icon('i-history'), 'Re-tune'));
+  }
+  actions.push(
     el('button', { class: 'btn btn-ghost', onclick: () => window.print() }, icon('i-print'), 'Print'),
     el('button', { class: 'btn btn-primary', onclick: generate }, icon('i-spark'), 'Regenerate'),
-  ];
+  );
 
   const filter = el('div', { class: 'doc-filter' },
     ...state.doctors.map((doc) => el('button', {
@@ -1148,6 +1182,19 @@ function renderCalendarPane() {
           chip.classList.add('is-b2b');
         }
         if (state.focusDoctor) chip.classList.add(state.focusDoctor === entry.name ? 'hit' : 'dim');
+        if (a.locked?.has(`${entry.name}|${night.iso}`)) {
+          chip.classList.add('is-locked');
+          chip.append(el('span', { class: 'cd-pin', title: 'Pinned — a re-solve leaves this alone' }, '●'));
+        }
+        if (signedIn() && state.scheduleId) {
+          chip.classList.add('is-editable');
+          chip.tabIndex = 0;
+          chip.title += ' · click to swap, pin or remove';
+          chip.addEventListener('click', (e) => { e.stopPropagation(); openShiftMenu(entry, night.iso, chip); });
+          chip.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openShiftMenu(entry, night.iso, chip); }
+          });
+        }
         docs.append(chip);
       }
       cell.append(docs);
@@ -1166,7 +1213,7 @@ function renderCalendarPane() {
       grid));
   }
 
-  pane.replaceChildren(resultHeader(actions), statStrip(), legend, filter, months);
+  pane.replaceChildren(resultHeader(actions), statStrip(), validationBanner(), legend, filter, months);
 }
 
 /** One measure across doctors, so one hue — rank is read from length. */
@@ -1410,6 +1457,16 @@ function renderExportPane() {
             toast('ok', 'Response copied to clipboard');
           } catch { toast('err', 'Clipboard blocked', 'Select the JSON below and copy manually.'); }
         }),
+      ...(signedIn() && state.scheduleId ? [
+        card('i-print', 'PDF · diary', 'One row per night, A4 portrait. Rendered on the server.',
+          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'vertical'), '_blank')),
+        card('i-users', 'PDF · wall chart', 'Doctors as columns, A4 landscape.',
+          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'horizontal'), '_blank')),
+        card('i-calendar', 'PDF · noticeboard', 'Month grid, A4 landscape.',
+          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'calendar'), '_blank')),
+        card('i-spark', 'Create a share link', 'A read-only page anyone can open without an account.',
+          createShareLink),
+      ] : []),
       card('i-spark', 'Copy request payload', 'Reproduce this exact run against the API.',
         async () => {
           try {
@@ -1417,16 +1474,20 @@ function renderExportPane() {
             toast('ok', 'Payload copied to clipboard');
           } catch { toast('err', 'Clipboard blocked'); }
         })),
+    signedIn() && state.scheduleId ? el('div', { class: 'panel', id: 'sharePanel' }) : null,
     el('div', { class: 'panel' },
       el('h3', {}, icon('i-download'), 'API response'),
       el('div', { class: 'panel-sub' }, `${analysis.name} · score ${fmt(analysis.score, 3)}`),
       el('pre', { class: 'json', html: highlightJson(response) })));
+
+  renderSharePanel();
 }
 
 /* ─────────────────────────── history ─────────────────────────── */
 
 function renderHistoryPane() {
   const pane = $('#pane-history');
+  if (signedIn()) return renderSavedSchedules(pane);
   if (!state.runs.length) {
     pane.replaceChildren(el('div', { class: 'empty-note' }, 'No runs yet. Generated rotas are kept here so you can compare and restore them.'));
     return;
@@ -1680,3 +1741,500 @@ wire();
 onConfigChange();
 showTab(state.activeTab === 'history' ? 'history' : 'calendar');
 checkApi();
+
+/* ═══════════════════════════ signed-in mode ═══════════════════════════
+
+   Everything below only runs with a session. The signed-out studio keeps
+   working exactly as before, so the tool is usable without an account and
+   an account adds persistence rather than gating entry.
+   ═══════════════════════════════════════════════════════════════════ */
+
+function applySession(payload) {
+  state.session = payload?.user || null;
+  state.departments = payload?.departments || [];
+  if (!state.departments.some((d) => d.id === state.department?.id)) {
+    state.department = state.departments[0] || null;
+  }
+  renderAccount();
+}
+
+function renderAccount() {
+  const picker = $('#departmentPicker');
+  const account = $('#accountBtn');
+  const signIn = $('#signInBtn');
+
+  if (!signedIn()) {
+    signIn.hidden = false;
+    account.hidden = true;
+    picker.hidden = true;
+    return;
+  }
+
+  signIn.hidden = true;
+  account.hidden = false;
+  account.textContent = state.session.name || state.session.email;
+  account.title = `${state.session.email} — click to sign out`;
+
+  picker.hidden = state.departments.length < 2;
+  picker.replaceChildren(...state.departments.map((d) =>
+    el('option', { value: d.id, selected: d.id === state.department?.id }, d.name)));
+}
+
+/** Pull the department's roster into the local editor model. */
+async function loadRoster() {
+  if (!signedIn() || !state.department) return;
+  const doctors = await api.doctors(state.department.id);
+  state.doctors = doctors.map((d) => ({ id: d.id, name: d.name, grade: d.grade || '' }));
+  state.unavailable = {};
+  for (const d of doctors) {
+    if (d.leave?.length) state.unavailable[d.name] = new Set(d.leave);
+  }
+  state.graded = state.doctors.some((d) => d.grade);
+  if (state.graded) {
+    state.grades = [...new Set(state.doctors.map((d) => d.grade).filter(Boolean))];
+  }
+  state.availDoctor = state.doctors[0]?.name || null;
+  onConfigChange();
+}
+
+/** Mirror roster edits to the server, so the next visit sees the same team. */
+async function syncRoster() {
+  if (!signedIn() || !state.department) return;
+  const dep = state.department.id;
+  const existing = await api.doctors(dep);
+  const byName = new Map(existing.map((d) => [d.name, d]));
+
+  for (const doc of state.doctors) {
+    const server = byName.get(doc.name);
+    if (!server) {
+      const created = await api.addDoctor(dep, { name: doc.name, grade: doc.grade || null });
+      doc.id = created.id;
+    } else {
+      doc.id = server.id;
+      if ((server.grade || '') !== (doc.grade || '')) {
+        await api.updateDoctor(dep, server.id, { name: doc.name, grade: doc.grade || null });
+      }
+    }
+    byName.delete(doc.name);
+  }
+  // Anyone left in the map was removed locally.
+  for (const gone of byName.values()) await api.removeDoctor(dep, gone.id);
+
+  for (const doc of state.doctors) {
+    const dates = [...(state.unavailable[doc.name] || [])].sort();
+    const server = existing.find((d) => d.name === doc.name);
+    const before = (server?.leave || []).slice().sort();
+    if (dates.join() !== before.join()) await api.setLeave(dep, doc.id, dates);
+  }
+}
+
+function generatePayload() {
+  const list = days();
+  const same = state.coverage === 'same';
+  return {
+    name: `Rota ${prettyDate(state.startDate)} – ${prettyDate(state.endDate)}`,
+    start_date: state.startDate,
+    end_date: state.endDate,
+    coverage: same ? Number(state.perNight) : Number(state.perNight),
+    coverage_by_date: same ? {} : Object.fromEntries(list.map((iso) => [iso, requiredOn(iso)])),
+    graded: state.graded,
+    grades: state.graded ? [...state.grades] : [],
+    holidays: [...state.holidays].sort(),
+    min_rest_nights: 1,
+  };
+}
+
+/** Turn a saved ScheduleOut into the shape the existing renderers expect. */
+function adoptSchedule(schedule, elapsed = 0) {
+  const nights = {};
+  for (const row of schedule.assignments) {
+    (nights[row.date] ||= []).push([row.doctor_name, row.points]);
+  }
+  const per = schedule.metrics?.per_doctor || {};
+  const response = {
+    schedule: nights,
+    points: Object.fromEntries(Object.values(per).map((v) => [v.name, v.points])),
+    num_shifts: Object.fromEntries(Object.values(per).map((v) => [v.name, v.shifts])),
+    num_weekend_shifts: Object.fromEntries(
+      Object.values(per).map((v) => [v.name, v.weekend_shifts])),
+    schedule_name: schedule.name,
+    score: schedule.metrics?.points_spread ?? 0,
+  };
+
+  state.scheduleId = schedule.id;
+  state.startDate = schedule.start_date;
+  state.endDate = schedule.end_date;
+  state.holidays = new Set(schedule.config?.holidays || []);
+  state.perNight = schedule.config?.coverage ?? state.perNight;
+
+  const payload = { ...generatePayload(), find: 0 };
+  state.result = {
+    payload,
+    response,
+    analysis: analyse(response, { department_is_graded: schedule.config?.graded ? 'Y' : 'N' }),
+    meta: { elapsed: elapsed || schedule.solve_seconds || 0, at: Date.now() },
+    saved: schedule,
+  };
+  // Locks and shortfalls come from the server, not from re-derivation.
+  state.result.analysis.locked = new Set(
+    schedule.assignments.filter((a) => a.locked).map((a) => `${a.doctor_name}|${a.date}`));
+  state.result.analysis.serverShortfalls = schedule.shortfalls || [];
+  state.focusDoctor = null;
+}
+
+async function generateOnServer() {
+  const overlay = $('#runOverlay');
+  const started = performance.now();
+  overlay.hidden = false;
+  $('#generateBtn').disabled = true;
+  $('#runDetail').textContent = 'Saving roster and solving';
+  $('#runBarFill').style.width = '40%';
+
+  try {
+    await syncRoster();
+    const schedule = await api.generate(state.department.id, generatePayload());
+    adoptSchedule(schedule, (performance.now() - started) / 1000);
+    await refreshValidation();
+    await loadServerSchedules();
+    $('#emptyState').hidden = true;
+    renderResult();
+    revealResults();
+    const m = schedule.metrics || {};
+    toast('ok', 'Rota saved', `${m.assigned} shifts · balance ${fmt(m.balance, 0)}% · ${schedule.solver_status}`);
+  } catch (err) {
+    const reasons = err instanceof ApiError ? err.reasons : [];
+    toast('err', 'Could not generate a rota', reasons.length ? reasons.join(' ') : err.message);
+  } finally {
+    overlay.hidden = true;
+    renderPreflight();
+  }
+}
+
+async function loadServerSchedules() {
+  if (!signedIn() || !state.department) return;
+  state.serverSchedules = await api.schedules(state.department.id);
+  renderHistoryPane();
+}
+
+async function refreshValidation() {
+  if (!signedIn() || !state.scheduleId) { state.validation = null; return; }
+  try {
+    state.validation = await api.validate(state.department.id, state.scheduleId);
+  } catch {
+    state.validation = null;
+  }
+}
+
+/** Re-read the open schedule after an edit and repaint everything. */
+async function refreshSchedule() {
+  const schedule = await api.schedule(state.department.id, state.scheduleId);
+  adoptSchedule(schedule);
+  await refreshValidation();
+  renderResult();
+}
+
+async function editAssignment(action, body) {
+  if (!signedIn() || !state.scheduleId) return;
+  try {
+    await api[action](state.department.id, state.scheduleId, body);
+    await refreshSchedule();
+  } catch (err) {
+    toast('err', 'Edit refused', err.message);
+  }
+}
+
+/** The menu shown when a coordinator taps someone on the calendar. */
+function openShiftMenu(entry, iso, anchor) {
+  if (!signedIn() || !state.scheduleId) return;
+  $('#shiftMenu')?.remove();
+
+  const doctor = state.doctors.find((d) => d.name === entry.name);
+  if (!doctor) return;
+  const onCall = new Set((state.result.analysis.model.nights.get(iso) || []).map((e) => e.name));
+  const locked = state.result.analysis.locked?.has(`${entry.name}|${iso}`);
+
+  const menu = el('div', { class: 'shift-menu', id: 'shiftMenu' },
+    el('div', { class: 'sm-head' }, `${entry.name} · ${prettyDate(iso)}`),
+    el('button', {
+      class: 'sm-item',
+      onclick: () => { closeShiftMenu(); editAssignment('unassign', { doctor_id: doctor.id, date: iso }); },
+    }, 'Take off this night'),
+    el('button', {
+      class: 'sm-item',
+      onclick: () => {
+        closeShiftMenu();
+        editAssignment('lock', { doctor_id: doctor.id, date: iso, locked: !locked });
+      },
+    }, locked ? 'Unpin (allow re-solving)' : 'Pin to this night'),
+    el('div', { class: 'sm-label' }, 'Swap with'),
+  );
+
+  const candidates = state.doctors.filter((d) => !onCall.has(d.name));
+  if (!candidates.length) {
+    menu.append(el('div', { class: 'sm-empty' }, 'Everyone else is already on call.'));
+  }
+  for (const other of candidates.slice(0, 12)) {
+    const off = isOff(other.name, iso);
+    menu.append(el('button', {
+      class: `sm-item${off ? ' is-warn' : ''}`,
+      title: off ? `${other.name} is on leave that night` : '',
+      onclick: () => {
+        closeShiftMenu();
+        editAssignment('swap', { date: iso, doctor_out: doctor.id, doctor_in: other.id });
+      },
+    }, other.name, off ? el('span', { class: 'sm-tag' }, 'on leave') : null));
+  }
+
+  document.body.append(menu);
+  const box = anchor.getBoundingClientRect();
+  const width = 232;
+  menu.style.left = `${Math.min(box.left, window.innerWidth - width - 12)}px`;
+  menu.style.top = `${Math.min(box.bottom + 6, window.innerHeight - menu.offsetHeight - 12)}px`;
+  setTimeout(() => document.addEventListener('click', closeShiftMenu, { once: true }), 0);
+}
+
+function closeShiftMenu() {
+  $('#shiftMenu')?.remove();
+}
+
+/* ───────────────────────────── auth screen ───────────────────────────── */
+
+function openAuth(mode = 'login') {
+  state.authMode = mode;
+  const signup = mode === 'signup';
+  $('#authTitle').textContent = signup ? 'Create an account' : 'Sign in';
+  $('#authSubmit').textContent = signup ? 'Create account' : 'Sign in';
+  $('#authNameField').hidden = !signup;
+  $('#authDeptField').hidden = !signup;
+  $('#authSwitchText').textContent = signup ? 'Already have an account?' : 'No account yet?';
+  $('#authSwitch').textContent = signup ? 'Sign in' : 'Create one';
+  $('#authPassword').autocomplete = signup ? 'new-password' : 'current-password';
+  $('#authError').hidden = true;
+  $('#authModal').showModal();
+  $('#authEmail').focus();
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPassword').value;
+  const error = $('#authError');
+  const submit = $('#authSubmit');
+  submit.disabled = true;
+
+  try {
+    const payload = state.authMode === 'signup'
+      ? await api.signup({
+        email, password,
+        name: $('#authName').value.trim() || email.split('@')[0],
+        department_name: $('#authDept').value.trim() || null,
+      })
+      : await api.login(email, password);
+
+    applySession(payload);
+    $('#authModal').close();
+
+    // A roster built while signed out is worth keeping.
+    const carried = state.doctors.length;
+    const remote = await api.doctors(state.department.id);
+    if (carried && !remote.length) {
+      await syncRoster();
+      toast('ok', `Signed in as ${state.session.name}`, `Your ${plural(carried, 'doctor')} moved across.`);
+    } else {
+      await loadRoster();
+      toast('ok', `Signed in as ${state.session.name}`, state.department?.name || '');
+    }
+    await loadServerSchedules();
+    renderPreflight();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function signOut() {
+  await api.logout().catch(() => {});
+  state.session = null;
+  state.department = null;
+  state.departments = [];
+  state.serverSchedules = [];
+  state.scheduleId = null;
+  state.validation = null;
+  renderAccount();
+  renderHistoryPane();
+  toast('info', 'Signed out', 'The studio keeps working without an account.');
+}
+
+async function bootSession() {
+  api.base = state.apiBase;
+  try {
+    const payload = await api.session();
+    applySession(payload);
+    if (state.department) {
+      await loadRoster();
+      await loadServerSchedules();
+    }
+  } catch {
+    applySession(null); // not signed in: stay in local mode
+  }
+}
+
+function wireAuth() {
+  $('#signInBtn').addEventListener('click', () => openAuth('login'));
+  $('#authSwitch').addEventListener('click', () =>
+    openAuth(state.authMode === 'signup' ? 'login' : 'signup'));
+  $('#authCancel').addEventListener('click', () => $('#authModal').close());
+  $('#authForm').addEventListener('submit', submitAuth);
+  $('#accountBtn').addEventListener('click', signOut);
+  $('#departmentPicker').addEventListener('change', async (e) => {
+    state.department = state.departments.find((d) => d.id === e.target.value) || null;
+    state.scheduleId = null;
+    state.result = null;
+    await loadRoster();
+    await loadServerSchedules();
+    showTab(state.activeTab);
+  });
+}
+
+wireAuth();
+bootSession();
+
+/** Server-side verdict on a hand-edited rota, shown where the edits happen. */
+function validationBanner() {
+  const v = state.validation;
+  if (!signedIn() || !state.scheduleId || !v) return null;
+  if (v.ok && !v.warnings.length) {
+    return el('div', { class: 'pf-item ok', style: 'margin-bottom:16px' },
+      icon('i-check'),
+      el('span', {}, el('b', {}, 'This rota is valid'),
+        el('em', {}, 'Coverage, leave and rest all check out against the department rules.')));
+  }
+  const items = [...v.errors.map((t) => ['bad', t]), ...v.warnings.slice(0, 6).map((t) => ['warn', t])];
+  return el('div', { style: 'display:flex;flex-direction:column;gap:7px;margin-bottom:16px' },
+    ...items.map(([tone, text]) => el('div', { class: `pf-item ${tone}` },
+      icon('i-alert'), el('span', {}, text))),
+    v.errors.length
+      ? null
+      : el('div', { class: 'hint' }, 'Warnings do not block publishing.'));
+}
+
+/* ─────────────────────── saved schedules & sharing ─────────────────────── */
+
+function savedScheduleRow(row) {
+  const m = row.metrics || {};
+  const current = row.id === state.scheduleId;
+
+  const open = el('button', { class: 'btn btn-ghost' }, 'Open');
+  open.addEventListener('click', async () => {
+    const full = await api.schedule(state.department.id, row.id);
+    adoptSchedule(full);
+    await refreshValidation();
+    $('#emptyState').hidden = true;
+    renderResult();
+    showTab('calendar');
+  });
+
+  const remove = el('button', { class: 'btn btn-ghost', title: 'Delete' }, icon('i-x'));
+  remove.addEventListener('click', async () => {
+    await api.deleteSchedule(state.department.id, row.id);
+    if (current) {
+      state.scheduleId = null;
+      state.result = null;
+    }
+    await loadServerSchedules();
+    showTab('history');
+  });
+
+  const when = el('div', { class: 'run-when' },
+    new Date(row.updated_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
+  when.append(el('div', {}, row.status));
+
+  const main = el('div', { class: 'run-main' },
+    el('b', {}, row.name),
+    el('span', {}, `${prettyDate(row.start_date)} → ${prettyDate(row.end_date)}`));
+
+  const metrics = el('div', { class: 'run-metrics' },
+    el('div', {}, el('span', {}, 'Balance'), el('b', {}, `${fmt(m.balance, 0)}%`)),
+    el('div', {}, el('span', {}, 'Coverage'), el('b', {}, `${fmt(m.coverage, 0)}%`)));
+
+  const actions = el('div', { class: 'run-actions' });
+  if (!current) actions.append(open);
+  actions.append(remove);
+
+  return el('div', { class: `run-row${current ? ' is-current' : ''}` },
+    when, main, metrics, actions);
+}
+
+
+function renderSavedSchedules(pane) {
+  const rows = state.serverSchedules;
+  const header = el('div', { class: 'result-head' },
+    el('div', { class: 'result-title' },
+      el('h2', {}, 'Saved rotas'),
+      el('span', { class: 'sub' },
+        `${plural(rows.length, 'rota')} in ${state.department?.name || 'this department'}`)));
+
+  if (!rows.length) {
+    pane.replaceChildren(header, el('div', { class: 'empty-note' },
+      'Nothing saved yet. Generate a rota and it is kept here for your whole department.'));
+    return;
+  }
+
+  pane.replaceChildren(header, el('div', { class: 'runs' }, ...rows.map(savedScheduleRow)));
+}
+
+
+async function createShareLink() {
+  try {
+    const share = await api.createShare(state.department.id, state.scheduleId, {
+      label: 'Ward noticeboard',
+    });
+    try {
+      await navigator.clipboard.writeText(share.url);
+      toast('ok', 'Share link copied', 'Read-only, no account needed.');
+    } catch {
+      toast('ok', 'Share link created', share.url);
+    }
+    await renderSharePanel(share.url);
+  } catch (err) {
+    toast('err', 'Could not create a share link', err.message);
+  }
+}
+
+async function renderSharePanel(justCreated = null) {
+  const host = $('#sharePanel');
+  if (!host || !signedIn() || !state.scheduleId) return;
+  const links = await api.shares(state.department.id, state.scheduleId).catch(() => []);
+
+  host.replaceChildren(
+    el('h3', {}, icon('i-spark'), 'Share links'),
+    el('div', { class: 'panel-sub' },
+      'Read-only pages that need no account. Only a hash of each token is stored, so a link can be revoked but never recovered.'),
+    justCreated
+      ? el('div', { class: 'share-new' },
+        el('input', { type: 'text', readonly: true, value: justCreated, onclick: (e) => e.target.select() }),
+        el('button', {
+          class: 'btn btn-ghost',
+          onclick: () => navigator.clipboard.writeText(justCreated)
+            .then(() => toast('ok', 'Copied')).catch(() => {}),
+        }, icon('i-copy'), 'Copy'))
+      : null,
+    links.length
+      ? el('div', { class: 'runs' }, ...links.map((link) => el('div', { class: 'run-row' },
+        el('div', { class: 'run-main' },
+          el('b', {}, link.label || 'Share link'),
+          el('span', {}, link.revoked_at
+            ? 'revoked'
+            : `${link.views} view${link.views === 1 ? '' : 's'}${link.expires_at ? ` · expires ${prettyDate(link.expires_at.slice(0, 10))}` : ''}`)),
+        link.revoked_at ? null : el('button', {
+          class: 'btn btn-ghost',
+          onclick: async () => {
+            await api.revokeShare(state.department.id, state.scheduleId, link.id);
+            await renderSharePanel();
+            toast('info', 'Link revoked');
+          },
+        }, 'Revoke'))))
+      : el('div', { class: 'empty-note' }, 'No links yet.'));
+}
