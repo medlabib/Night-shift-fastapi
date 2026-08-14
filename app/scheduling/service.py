@@ -92,7 +92,7 @@ def build_request(
         change_penalty=change_penalty,
         preferences=load_preferences(db, department_id) if use_preferences else {},
         time_limit=time_limit or settings.solver_time_limit,
-        workers=settings.solver_workers,
+        workers=settings.workers,
     )
 
 

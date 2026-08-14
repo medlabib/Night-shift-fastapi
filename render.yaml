@@ -1,0 +1,52 @@
+# Render blueprint — deploys the app and a Postgres database together.
+#
+#   1. Push this repo to GitHub.
+#   2. Render dashboard → New → Blueprint → pick the repo.
+#   3. Everything below is created automatically; SECRET_KEY is generated
+#      for you and never has to be typed anywhere.
+#
+# The free web service sleeps after ~15 minutes idle and takes roughly a
+# minute to wake, because this image carries OR-Tools and the WeasyPrint
+# system libraries. Measured working set is ~110 MB for a 10-doctor month
+# and ~150 MB for 25 doctors over 60 nights, so the 512 MB free instance
+# has room; the constraint is CPU, not memory.
+#
+# Render's free Postgres expires and is deleted after its trial window. For
+# anything you intend to keep, create a database on a provider whose free
+# tier persists (Neon, Supabase) and paste its URL into DATABASE_URL
+# instead — nothing else changes.
+
+services:
+  - type: web
+    name: night-shift
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: night-shift-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+      # Render terminates TLS in front of the app, so cookies can be
+      # HTTPS-only.
+      - key: COOKIE_SECURE
+        value: "true"
+      # A free instance gets a fraction of a core. The solver returns the
+      # best rota found when the budget runs out, so a shorter budget costs
+      # a little fairness rather than failing.
+      - key: SOLVER_TIME_LIMIT
+        value: "8"
+      # 0 lets the app match the host's real core count instead of
+      # oversubscribing a shared CPU.
+      - key: SOLVER_WORKERS
+        value: "0"
+
+databases:
+  - name: night-shift-db
+    plan: free
+    region: frankfurt
