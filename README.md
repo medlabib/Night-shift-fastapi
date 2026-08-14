@@ -25,6 +25,46 @@ uvicorn app.main:app --reload
 WeasyPrint needs Pango and Cairo, which the Docker image installs. Locally on Debian or
 Ubuntu: `apt install libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0`.
 
+## Deploying it free
+
+The app needs three things a host must support: a **Docker image** (WeasyPrint
+needs Pango and Cairo, which plain buildpacks do not provide), **~150 MB of RAM**
+(measured: 85 MB with OR-Tools loaded, 110 MB solving a 10-doctor month, 148 MB
+for 25 doctors over 60 nights), and a **Postgres** database. Solving is
+CPU-bound, so CPU is the real constraint on a free tier, not memory.
+
+**The quickest route — Render.** `render.yaml` in this repo is a blueprint:
+dashboard → New → Blueprint → pick the repo. It creates the web service and a
+Postgres instance, generates `SECRET_KEY`, and runs migrations on boot. The free
+web service sleeps after ~15 minutes idle and takes about a minute to wake, since
+the image carries OR-Tools.
+
+**Keep the data.** Render's free Postgres is deleted when its trial window ends.
+For anything you intend to keep, create a database on a provider whose free tier
+persists — [Neon](https://neon.tech) or [Supabase](https://supabase.com) — and
+set `DATABASE_URL` to its connection string (add `+psycopg` after
+`postgresql`). Nothing else changes.
+
+**Other hosts that fit.** Anywhere that runs a Dockerfile: Fly.io, Koyeb, and
+Hugging Face Spaces in Docker mode all work, paired with Neon or Supabase for the
+database. Oracle Cloud's Always Free ARM VM is the only genuinely
+free-forever option with real CPU behind it — OR-Tools publishes `aarch64`
+wheels, so the image builds there — at the cost of setting the box up yourself.
+
+**Serverless will not work.** Vercel, Netlify Functions and similar cap execution
+at a few seconds and cannot hold the OR-Tools binary comfortably; a solve budget
+of 8–10 seconds does not fit.
+
+Whatever you pick, set these:
+
+| Variable | Why |
+| --- | --- |
+| `SECRET_KEY` | signs sessions and share links — generate it, never reuse the default |
+| `DATABASE_URL` | `postgresql+psycopg://…` |
+| `COOKIE_SECURE=true` | once you are behind HTTPS |
+| `SOLVER_TIME_LIMIT=8` | shorter budget for a shared CPU; you lose a little fairness, never correctness |
+| `SOLVER_WORKERS=0` | match the host's real core count rather than oversubscribing |
+
 ## How rotas are built
 
 The engine states the problem once and lets **CP-SAT** (Google OR-Tools) prove an answer,

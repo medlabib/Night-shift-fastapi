@@ -1,5 +1,6 @@
 """Runtime configuration, read from the environment."""
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,7 +29,15 @@ class Settings(BaseSettings):
 
     # Solver budget. The CP-SAT model is usually optimal well inside this.
     solver_time_limit: float = 10.0
-    solver_workers: int = 8
+    # 0 means "match the host". Hard-coding 8 workers onto a free tier's
+    # fraction of a core makes solving slower, not faster.
+    solver_workers: int = 0
+
+    @property
+    def workers(self) -> int:
+        if self.solver_workers > 0:
+            return self.solver_workers
+        return max(1, min(8, os.cpu_count() or 1))
 
     # Auth throttling: attempts allowed per window, per email + IP.
     login_max_attempts: int = 10

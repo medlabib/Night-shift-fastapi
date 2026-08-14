@@ -89,7 +89,7 @@ def schedule(data: ScheduleInput) -> dict:
         max_shifts_per_window=2,
         spread_window_nights=7,
         time_limit=settings.solver_time_limit,
-        workers=settings.solver_workers,
+        workers=settings.workers,
     )
 
     result = solve(req)
