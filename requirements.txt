@@ -1,4 +1,14 @@
 fastapi
-numpy
-pandas
-uvicorn
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy>=2.0
+alembic
+psycopg[binary]
+argon2-cffi
+itsdangerous
+jinja2
+python-multipart
+email-validator
+ortools
+weasyprint

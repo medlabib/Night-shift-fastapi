@@ -1,0 +1,61 @@
+{% extends "pdf/base.html" %}
+{# Month grid — the ward noticeboard view. #}
+{% block content %}
+<style>
+  .month { page-break-inside: avoid; margin-bottom: 9pt; }
+  .month h2 {
+    font-size: 10pt; margin: 0 0 4pt; padding-bottom: 2pt;
+    border-bottom: .6pt solid #dde3f2;
+  }
+  table.cal { table-layout: fixed; border-collapse: separate; border-spacing: 2pt; }
+  table.cal th {
+    font-size: 6.5pt; text-align: center; border: none; padding: 0 0 1pt;
+    color: #8794b3; letter-spacing: .4pt;
+  }
+  table.cal td {
+    border: .5pt solid #dde3f2; border-radius: 2pt; padding: 2pt 3pt;
+    height: 21mm; vertical-align: top; font-size: 6.8pt;
+  }
+  table.cal td.blank { border: none; background: none; }
+  table.cal td.weekend { background: #f5f7fd; }
+  table.cal td.holiday { background: #fdf3e8; border-color: #e8c9a4; }
+  table.cal .daynum { font-size: 8pt; font-weight: 700; }
+  table.cal .w { float: right; font-size: 6pt; color: #8794b3; font-weight: 700; }
+  table.cal .doc {
+    display: block; margin-top: 1.4pt; padding-left: 3pt;
+    border-left: 1.5pt solid #4f5fe0; line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  table.cal td.holiday .doc { border-left-color: #d2691a; }
+  table.cal td.weekend .doc { border-left-color: #8b5cf6; }
+  table.cal .none { color: #c0485f; font-size: 6pt; }
+</style>
+
+{% for month in months %}
+<div class="month">
+  <h2>{{ month.label }}</h2>
+  <table class="cal">
+    <thead>
+      <tr>{% for d in weekday_names %}<th>{{ d }}</th>{% endfor %}</tr>
+    </thead>
+    <tbody>
+      {% for week in month.weeks %}
+      <tr>
+        {% for cell in week %}
+          {% if cell %}
+          <td class="{% if cell.holiday %}holiday{% elif cell.weekend %}weekend{% endif %}">
+            <span class="daynum">{{ cell.date.day }}</span><span class="w">{{ cell.weight }}</span>
+            {% for d in cell.doctors %}<span class="doc">{{ d.doctor_name }}</span>{% endfor %}
+            {% if not cell.doctors %}<span class="doc none">none</span>{% endif %}
+          </td>
+          {% else %}
+          <td class="blank"></td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endblock %}

@@ -18,5 +18,9 @@ env3.*
 env
 docs_build
 venv
+.venv
 docs.zip
 archive.zip
+# Local Postgres data and env
+.env
+pgdata/

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ schedule.name }}</title>
+<style>
+  @page {
+    size: {{ page_size }};
+    margin: 15mm 13mm 16mm;
+    @bottom-left {
+      content: "{{ department.name }}{% if department.hospital %} · {{ department.hospital }}{% endif %}";
+      font-family: "DejaVu Sans", sans-serif; font-size: 7.5pt; color: #7b8398;
+    }
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: "DejaVu Sans", sans-serif; font-size: 7.5pt; color: #7b8398;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: "DejaVu Sans", sans-serif;
+    font-size: 8.5pt; color: #16203a; margin: 0; line-height: 1.4;
+  }
+
+  .head { border-bottom: 1.6pt solid #4f5fe0; padding-bottom: 6pt; margin-bottom: 10pt; }
+  .head h1 { font-size: 15pt; margin: 0 0 2pt; letter-spacing: -.2pt; }
+  .head .period { font-size: 9pt; color: #4d5b7c; }
+  .head .meta { font-size: 7.5pt; color: #8794b3; margin-top: 3pt; }
+  .head .status {
+    display: inline-block; padding: 1pt 5pt; border-radius: 6pt;
+    font-size: 7pt; letter-spacing: .5pt; text-transform: uppercase;
+    background: #eef0fd; color: #4f5fe0; margin-left: 4pt;
+  }
+  .head .status.draft { background: #fdf3e3; color: #b7791f; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: .6pt;
+    color: #6b7793; border-bottom: .8pt solid #c9d1e6; padding: 4pt 5pt; font-weight: 600;
+  }
+  td { padding: 4pt 5pt; border-bottom: .5pt solid #e6eaf4; vertical-align: top; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+
+  .weekend { background: #f5f7fd; }
+  .holiday { background: #fdf3e8; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .center { text-align: center; }
+  .muted { color: #8794b3; }
+  .weight {
+    font-size: 7pt; font-weight: 700; color: #6b7793;
+    background: #eef1f8; padding: .5pt 3pt; border-radius: 3pt;
+  }
+
+  .legend { margin-top: 10pt; font-size: 7pt; color: #8794b3; }
+  .legend span { margin-right: 10pt; }
+  .swatch {
+    display: inline-block; width: 7pt; height: 7pt; border-radius: 2pt;
+    border: .5pt solid #c9d1e6; vertical-align: -1pt; margin-right: 2pt;
+  }
+
+  .summary { margin-top: 12pt; page-break-inside: avoid; }
+  .summary h2 { font-size: 9.5pt; margin: 0 0 5pt; }
+  .short { margin-top: 10pt; padding: 6pt 8pt; border-left: 2pt solid #dc4d68; background: #fdf0f2; }
+  .short h2 { font-size: 9pt; margin: 0 0 3pt; color: #b2334a; }
+  .short li { font-size: 7.5pt; color: #7a2c3d; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>{{ schedule.name }}{% if focus_doctor %} — {{ focus_doctor }}{% endif %}</h1>
+  <div class="period">
+    {{ schedule.start_date.strftime('%A %d %B %Y') }} to {{ schedule.end_date.strftime('%A %d %B %Y') }}
+    {# .value, or the enum renders as "ScheduleStatus.draft". #}
+    <span class="status {{ schedule.status.value }}">{{ schedule.status.value }}</span>
+  </div>
+  <div class="meta">
+    {{ department.name }}{% if department.hospital %} · {{ department.hospital }}{% endif %}
+    · {{ nights|length }} nights · {{ assignments|length }} shifts
+    {%- if metrics.balance %} · balance {{ metrics.balance }}%{% endif %}
+    · generated {{ generated_at.strftime('%d %b %Y') }}
+  </div>
+</div>
+
+{% block content %}{% endblock %}
+
+{% if shortfalls %}
+<div class="short">
+  <h2>{{ shortfalls|length }} night{{ '' if shortfalls|length == 1 else 's' }} not fully covered</h2>
+  <ul>
+    {% for s in shortfalls[:12] %}
+    <li>{{ s.date }}{% if s.grade %} · {{ s.grade }}{% endif %}:
+        {{ s.assigned }} of {{ s.required }} — {{ s.reason }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if show_summary and per_doctor %}
+<div class="summary">
+  <h2>Workload</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Doctor</th>{% if graded %}<th>Grade</th>{% endif %}
+        <th class="num">Shifts</th><th class="num">Weekend</th>
+        <th class="num">Holiday</th><th class="num">Points</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in per_doctor %}
+      <tr>
+        <td>{{ d.name }}</td>{% if graded %}<td class="muted">{{ d.grade or '—' }}</td>{% endif %}
+        <td class="num">{{ d.shifts }}</td>
+        <td class="num">{{ d.weekend_shifts }}</td>
+        <td class="num">{{ d.holiday_shifts }}</td>
+        <td class="num">{{ d.points }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="legend">
+  <span><i class="swatch" style="background:#f5f7fd"></i>Weekend</span>
+  <span><i class="swatch" style="background:#fdf3e8"></i>Public holiday</span>
+  <span>Weights: weekday 1.0 · Saturday 1.5 · Sunday and holidays 2.0</span>
+</div>
+
+</body>
+</html>

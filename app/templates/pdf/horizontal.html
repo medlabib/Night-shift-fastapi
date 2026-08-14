@@ -1,0 +1,66 @@
+{% extends "pdf/base.html" %}
+{# Doctors as columns, nights as rows — the wall-chart view, landscape. #}
+{% block content %}
+<style>
+  table.grid { table-layout: fixed; width: 100%; }
+  /* Names run bottom-to-top so 20+ doctors still fit across the page.
+     WeasyPrint renders `writing-mode` upside down and mirrored, so the
+     rotation is done with a transform anchored to the cell's bottom edge. */
+  table.grid th.doc {
+    height: 26mm; padding: 0; vertical-align: bottom; position: relative;
+  }
+  table.grid th.doc .rot {
+    position: absolute; bottom: 1.5mm; left: 50%;
+    transform: rotate(-90deg); transform-origin: left bottom;
+    white-space: nowrap; font-size: 6.5pt; text-align: left;
+  }
+  table.grid td { padding: 2.5pt 1pt; text-align: center; font-size: 7.5pt; }
+  table.grid td.date { text-align: left; white-space: nowrap; font-size: 7.5pt; }
+  table.grid .on {
+    display: inline-block; width: 8pt; height: 8pt; line-height: 8pt;
+    border-radius: 2pt; background: #4f5fe0; color: #fff; font-size: 6pt; font-weight: 700;
+  }
+  table.grid .on.we { background: #8b5cf6; }
+  table.grid .on.hol { background: #d2691a; }
+  table.grid td.tot { font-weight: 700; font-variant-numeric: tabular-nums; }
+  table.grid tr.totals td { border-top: .8pt solid #c9d1e6; border-bottom: none; font-size: 7pt; }
+</style>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th style="width:20mm">Night</th>
+      {% for d in doctors %}<th class="doc"><div class="rot">{{ d.name }}</div></th>{% endfor %}
+      <th style="width:9mm" class="center">On</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for night in nights %}
+    <tr class="{% if night.holiday %}holiday{% elif night.weekend %}weekend{% endif %}">
+      <td class="date">
+        <b>{{ night.date.strftime('%d %b') }}</b>
+        <span class="muted">{{ night.date.strftime('%a') }}</span>
+      </td>
+      {% for d in doctors %}
+      <td>
+        {% if d.id in night.doctor_ids %}
+          <span class="on {% if night.holiday %}hol{% elif night.weekend %}we{% endif %}">●</span>
+        {% endif %}
+      </td>
+      {% endfor %}
+      <td class="center muted">{{ night.doctors|length }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="totals">
+      <td class="date muted">Shifts</td>
+      {% for d in doctors %}<td class="tot">{{ d.shifts }}</td>{% endfor %}
+      <td></td>
+    </tr>
+    <tr class="totals">
+      <td class="date muted">Points</td>
+      {% for d in doctors %}<td class="tot">{{ d.points }}</td>{% endfor %}
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}
