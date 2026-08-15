@@ -14,6 +14,7 @@ import calendar
 import datetime as dt
 import io
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import RequireRole
+from app.i18n import Translator, normalise
 from app.models import Department, Membership, Role, Schedule
 from app.scheduling import service
 from app.scheduling.domain import weight_for
@@ -44,7 +46,8 @@ LAYOUTS = {
 WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
-def _context(db: Session, schedule: Schedule, *, focus_doctor: uuid.UUID | None = None) -> dict:
+def _context(db: Session, schedule: Schedule, *, focus_doctor: uuid.UUID | None = None,
+             lang: str = "en") -> dict:
     payload = service.schedule_out(db, schedule)
     department = db.get(Department, schedule.department_id)
     config = schedule.config or {}
@@ -95,6 +98,8 @@ def _context(db: Session, schedule: Schedule, *, focus_doctor: uuid.UUID | None 
     if focus_doctor:
         per_doctor = [d for d in per_doctor if d["id"] == focus_doctor]
 
+    tr = Translator(lang)
+
     # Weeks starting Monday, padded so every row has seven cells.
     months = []
     for (year, month), group in _by_month(nights):
@@ -103,7 +108,7 @@ def _context(db: Session, schedule: Schedule, *, focus_doctor: uuid.UUID | None 
         cells = [None] * lead + group
         cells += [None] * (-len(cells) % 7)
         months.append({
-            "label": f"{calendar.month_name[month]} {year}",
+            "label": tr.month_year(year, month),
             "weeks": [cells[i:i + 7] for i in range(0, len(cells), 7)],
         })
 
@@ -118,7 +123,11 @@ def _context(db: Session, schedule: Schedule, *, focus_doctor: uuid.UUID | None 
         "metrics": payload.metrics or {},
         "shortfalls": [s.model_dump() for s in payload.shortfalls],
         "graded": bool(config.get("graded")),
-        "weekday_names": WEEKDAY_NAMES,
+        "weekday_names": tr.weekday_headers,
+        "t": tr,
+        "tr": tr,
+        "lang": tr.lang,
+        "dir": tr.dir,
         "generated_at": dt.datetime.now(),
         "focus_doctor": focus_name,
         "show_summary": True,
@@ -133,22 +142,36 @@ def _by_month(nights: list[dict]):
 
 
 def render_pdf(db: Session, schedule: Schedule, layout: str,
-               focus_doctor: uuid.UUID | None = None) -> bytes:
+               focus_doctor: uuid.UUID | None = None, lang: str = "en") -> bytes:
     from weasyprint import HTML  # imported lazily: it pulls in Pango and Cairo
 
     template_name, page_size = LAYOUTS[layout]
-    context = _context(db, schedule, focus_doctor=focus_doctor)
+    context = _context(db, schedule, focus_doctor=focus_doctor, lang=lang)
     context["page_size"] = page_size
     html = TEMPLATES.get_template(template_name).render(**context)
     return HTML(string=html).write_pdf()
 
 
-def _filename(schedule: Schedule, layout: str, suffix: str) -> str:
+def _disposition(schedule: Schedule, layout: str, suffix: str, inline: bool = False) -> str:
+    """Build a Content-Disposition that survives a non-Latin schedule name.
+
+    HTTP headers are latin-1, and `str.isalnum()` is true for Arabic and
+    accented letters — so a name like "جدول" sailed past a naive filter and
+    made the header un-encodable. The plain `filename` is now ASCII-only,
+    with RFC 5987 `filename*` carrying the real name for clients that
+    understand it.
+    """
     stem = f"{schedule.name}-{layout}".lower()
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in stem).strip("-")
-    while "--" in safe:
-        safe = safe.replace("--", "-")
-    return f"{safe}.{suffix}"
+    ascii_safe = "".join(
+        c if (c.isascii() and c.isalnum()) or c in "-_" else "-" for c in stem
+    ).strip("-")
+    while "--" in ascii_safe:
+        ascii_safe = ascii_safe.replace("--", "-")
+    ascii_safe = ascii_safe or "rota"
+
+    full = quote(f"{schedule.name}-{layout}.{suffix}", safe="")
+    kind = "inline" if inline else "attachment"
+    return f"{kind}; filename=\"{ascii_safe}.{suffix}\"; filename*=UTF-8\'\'{full}"
 
 
 @router.get(
@@ -160,6 +183,7 @@ def schedule_pdf(
     schedule_id: uuid.UUID,
     layout: str = Query("vertical", pattern="^(vertical|horizontal|calendar)$"),
     doctor_id: uuid.UUID | None = None,
+    lang: str = Query("en", pattern="^(en|fr|ar)$"),
     membership: Membership = Depends(RequireRole(Role.member)),
     db: Session = Depends(get_db),
 ):
@@ -167,13 +191,11 @@ def schedule_pdf(
     if schedule is None or schedule.department_id != department_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Schedule not found.")
 
-    pdf = render_pdf(db, schedule, layout, doctor_id)
+    pdf = render_pdf(db, schedule, layout, doctor_id, lang)
     return Response(
         pdf,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{_filename(schedule, layout, "pdf")}"'
-        },
+        headers={"Content-Disposition": _disposition(schedule, layout, "pdf")},
     )
 
 
@@ -181,19 +203,18 @@ def schedule_pdf(
 def shared_pdf(
     token: str,
     layout: str = Query("vertical", pattern="^(vertical|horizontal|calendar)$"),
+    lang: str = Query("en", pattern="^(en|fr|ar)$"),
     db: Session = Depends(get_db),
 ):
     """A shared link can print the rota too, scoped the same way it reads it."""
     from app.routers.share import resolve_share
 
     link, schedule = resolve_share(token, db)
-    pdf = render_pdf(db, schedule, layout, link.doctor_id)
+    pdf = render_pdf(db, schedule, layout, link.doctor_id, lang)
     return Response(
         pdf,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'inline; filename="{_filename(schedule, layout, "pdf")}"'
-        },
+        headers={"Content-Disposition": _disposition(schedule, layout, "pdf", inline=True)},
     )
 
 
@@ -228,7 +249,5 @@ def schedule_csv(
     return StreamingResponse(
         iter([buffer.getvalue()]),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="{_filename(schedule, "rota", "csv")}"'
-        },
+        headers={"Content-Disposition": _disposition(schedule, "rota", "csv")},
     )

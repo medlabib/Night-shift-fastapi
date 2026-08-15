@@ -9,23 +9,24 @@
    ============================================================ */
 
 import { api, ApiError } from '/static/api.js';
+import {
+  LOCALES, t, setLocale, locale, direction, intlTag,
+  fmtDate, monthLabel, weekdayNames, translateDom, detectLocale, num as fmtNumber,
+} from '/static/i18n.js';
 
 const STORE_KEY = 'nightshift.studio.v1';
 const RUNS_KEY = 'nightshift.studio.runs.v1';
 const PERF_KEY = 'nightshift.studio.perf.v1';
 
 const EFFORTS = [
-  { find: 50,   label: 'Draft',      blurb: 'A single quick pass — good for sanity-checking the setup.' },
-  { find: 150,  label: 'Quick',      blurb: 'Fast turnaround, usually a decent rota.' },
-  { find: 400,  label: 'Balanced',   blurb: 'The sweet spot for most departments.' },
-  { find: 1200, label: 'Thorough',   blurb: 'Searches hard for an even points split. Takes longer.' },
-  { find: 3000, label: 'Exhaustive', blurb: 'Best fairness the engine can find. Expect a wait.' },
+  { find: 50, key: 'draft' }, { find: 150, key: 'quick' }, { find: 400, key: 'balanced' },
+  { find: 1200, key: 'thorough' }, { find: 3000, key: 'exhaustive' },
 ];
 
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DOW_SHORT = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'];
+// Day and month names come from Intl per locale, not from a hard-coded
+// English list, so Arabic and French get their own names and ordering.
+const DOW = () => weekdayNames('short');
+const DOW_SHORT = () => weekdayNames('narrow');
 
 /* ─────────────────────────── date helpers ─────────────────────────── */
 /* Everything is a local 'YYYY-MM-DD' string; Dates are only used for
@@ -36,7 +37,7 @@ const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, 
 const addDays = (iso, n) => { const d = dateOf(iso); d.setDate(d.getDate() + n); return isoOf(d); };
 const dowOf = (iso) => dateOf(iso).getDay();
 const isWeekend = (iso) => { const w = dowOf(iso); return w === 0 || w === 6; };
-const prettyDate = (iso) => { const d = dateOf(iso); return `${DOW[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`; };
+const prettyDate = (iso) => fmtDate(iso);
 const daysBetween = (a, b) => Math.round((dateOf(b) - dateOf(a)) / 86400000);
 
 function eachDay(start, end) {
@@ -119,10 +120,19 @@ function avatarStyle() {
 
 const fmt = (n, dp = 1) => {
   if (!isFinite(n)) return '—';
-  const r = Math.round(n * 10 ** dp) / 10 ** dp;
-  return Number.isInteger(r) ? String(r) : r.toFixed(dp);
+  return fmtNumber(Math.round(n * 10 ** dp) / 10 ** dp, dp);
 };
-const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+/** Counted nouns go through the catalog so each language uses its own
+    plural categories — Arabic has six, English two. */
+const UNIT_KEYS = {
+  night: 'unit.night', doctor: 'unit.doctor', shift: 'unit.shift', rota: 'unit.rota',
+  holiday: 'rules.holidays', view: 'share.views',
+};
+const plural = (n, one, many) => {
+  const key = UNIT_KEYS[one];
+  if (key) return t(key, { count: n });
+  return `${n} ${n === 1 ? one : (many || one + 's')}`;
+};
 
 /* ─────────────────────────── state ─────────────────────────── */
 
@@ -132,6 +142,7 @@ const defaultEnd = isoOf(new Date(today.getFullYear(), today.getMonth() + 2, 0))
 
 const state = {
   theme: 'dark',
+  locale: 'en',
   apiBase: '',
   autoSave: true,
   startDate: defaultStart,
@@ -170,7 +181,7 @@ function saveState() {
   if (!state.autoSave) return;
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
-      theme: state.theme, apiBase: state.apiBase, autoSave: state.autoSave,
+      theme: state.theme, locale: state.locale, apiBase: state.apiBase, autoSave: state.autoSave,
       startDate: state.startDate, endDate: state.endDate,
       doctors: state.doctors, graded: state.graded, grades: state.grades,
       coverage: state.coverage, perNight: state.perNight, perNightMap: state.perNightMap,
@@ -423,14 +434,14 @@ function renderRoster() {
   const scroll = host.scrollTop;
 
   if (!state.doctors.length) {
-    host.replaceChildren(el('div', { class: 'empty-note' }, 'No doctors yet — add them one by one, or paste a comma-separated list.'));
+    host.replaceChildren(el('div', { class: 'empty-note' }, t('roster.empty')));
   } else {
     host.replaceChildren(...state.doctors.map((doc) => {
       const offCount = state.unavailable[doc.name]?.size || 0;
       const row = el('div', { class: `doc-row${offCount ? ' has-blackout' : ''}` },
         el('div', { class: 'avatar', style: avatarStyle() }, initials(doc.name)),
         el('div', { class: 'doc-name', title: doc.name }, doc.name),
-        offCount ? el('span', { class: 'doc-badge', title: `${offCount} nights unavailable` }, `${offCount} off`) : null,
+        offCount ? el('span', { class: 'doc-badge' }, t('roster.off', { count: offCount })) : null,
       );
       if (state.graded) {
         const sel = el('select', {
@@ -443,7 +454,8 @@ function renderRoster() {
         row.append(sel);
       }
       row.append(el('button', {
-        class: 'doc-del', title: `Remove ${doc.name}`, 'aria-label': `Remove ${doc.name}`,
+        class: 'doc-del', title: t('roster.remove', { name: doc.name }),
+        'aria-label': t('roster.remove', { name: doc.name }),
         onclick: () => {
           state.doctors = state.doctors.filter((d) => d.name !== doc.name);
           delete state.unavailable[doc.name];
@@ -490,7 +502,7 @@ function renderAvailDoctorSelect() {
   }
   sel.replaceChildren(...state.doctors.map((d) =>
     el('option', { value: d.name, selected: d.name === state.availDoctor }, d.name)));
-  if (!state.doctors.length) sel.replaceChildren(el('option', {}, '— add doctors first —'));
+  if (!state.doctors.length) sel.replaceChildren(el('option', {}, t('avail.addFirst')));
 }
 
 /**
@@ -515,7 +527,7 @@ function renderMiniCal(host, opts) {
   for (const [key, isos] of byMonth) {
     const first = dateOf(isos[0]);
     const grid = el('div', { class: 'mc-grid' },
-      ...DOW_SHORT.map((d, i) => el('div', { class: 'mc-dow', key: i }, d)));
+      ...DOW_SHORT().map((d, i) => el('div', { class: 'mc-dow', key: i }, d)));
 
     for (let i = 0; i < dateOf(`${key}-01`).getDay(); i++) grid.append(el('div', { class: 'mc-day is-out' }));
     // Blank out the days of the month that precede the period's start.
@@ -535,7 +547,7 @@ function renderMiniCal(host, opts) {
     }
 
     host.append(el('div', { class: 'mc-month' },
-      el('div', { class: 'mc-title' }, `${MONTHS[first.getMonth()]} ${first.getFullYear()}`),
+      el('div', { class: 'mc-title' }, monthLabel(first.getFullYear(), first.getMonth())),
       grid));
   }
 }
@@ -570,7 +582,8 @@ function renderAvailCal() {
   });
 
   const total = Object.values(state.unavailable).reduce((s, v) => s + v.size, 0);
-  $('#availNote').textContent = total ? `${plural(total, 'night')} blocked` : 'no blackouts';
+  $('#availNote').textContent = total
+    ? t('avail.blocked', { nights: plural(total, 'night') }) : t('avail.none');
 
   const summary = $('#blackoutSummary');
   const entries = Object.entries(state.unavailable).filter(([, v]) => v.size);
@@ -581,7 +594,7 @@ function renderAvailCal() {
       el('button', {
         class: 'link-btn danger',
         onclick: () => { delete state.unavailable[doc]; onConfigChange(); },
-      }, 'clear'))));
+      }, t('avail.clear')))));
 }
 
 function renderCoverageCal() {
@@ -625,14 +638,17 @@ function renderCoverage() {
   const gradedHint = $('#gradedCoverageHint');
   gradedHint.hidden = !state.graded;
   if (state.graded) {
-    gradedHint.innerHTML = `Applied <b>per grade</b> — with ${state.grades.length} grades that is <b>${state.perNight * state.grades.length} doctors</b> on call each night.`;
+    gradedHint.innerHTML = t('coverage.gradedNote', {
+      grades: state.grades.length, total: state.perNight * state.grades.length,
+    });
   }
 
   if (!same) renderCoverageCal();
 
   const list = days();
   const seats = list.reduce((s, iso) => s + requiredOn(iso), 0) * (state.graded ? Math.max(1, state.grades.length) : 1);
-  $('#coverageNote').textContent = list.length ? `${plural(seats, 'shift')} total` : '—';
+  $('#coverageNote').textContent = list.length
+    ? t('coverage.total', { shifts: plural(seats, 'shift') }) : '—';
 }
 
 function renderPeriod() {
@@ -641,16 +657,18 @@ function renderPeriod() {
   const list = days();
   const weekends = list.filter(isWeekend).length;
   $('#periodNote').textContent = list.length
-    ? `${plural(list.length, 'night')} · ${weekends} weekend`
-    : 'invalid range';
+    ? t('period.summary', { nights: plural(list.length, 'night'), weekends })
+    : t('period.invalid');
   $('#periodNote').classList.toggle('is-warn', !list.length);
 }
 
 function renderEffort() {
   const e = EFFORTS[state.effort];
   $('#effort').value = state.effort;
-  $('#effortNote').textContent = e.label;
-  $('#effortHint').innerHTML = `<b>${e.find.toLocaleString()}</b> candidate rotas. ${e.blurb}`;
+  $('#effortNote').textContent = t(`effort.${e.key}`);
+  $('#effortHint').innerHTML = t('effort.hint', {
+    count: e.find.toLocaleString(intlTag()), blurb: t(`effort.blurb.${e.key}`),
+  });
 }
 
 /** Single entry point after any config mutation. */
@@ -778,9 +796,12 @@ async function generate() {
     $('#emptyState').hidden = true;
     renderResult();
     revealResults();
-    toast('ok', 'Rota generated', `${analysis.assignedCount} shifts placed in ${fmt(elapsed)}s · balance ${fmt(analysis.balance, 0)}%`);
+    toast('ok', t('toast.generated'), t('toast.generatedSub', {
+      shifts: plural(analysis.assignedCount, 'shift'),
+      seconds: fmt(elapsed), balance: fmt(analysis.balance, 0),
+    }));
   } catch (err) {
-    toast('err', 'Could not generate a rota', err.message);
+    toast('err', t('toast.failed'), err.message);
   } finally {
     clearInterval(ticker);
     clearInterval(clock);
@@ -814,13 +835,13 @@ async function checkApi() {
     if (res.ok) {
       const body = await res.json().catch(() => ({}));
       pill.className = 'pill is-ok';
-      text.textContent = body.doctors_endpoint === false ? 'API online' : 'API online';
+      text.textContent = t('api.online');
       return;
     }
     throw new Error(String(res.status));
   } catch {
     pill.className = 'pill is-bad';
-    text.textContent = 'API unreachable';
+    text.textContent = t('api.offline');
   }
 }
 
@@ -1081,15 +1102,16 @@ function statStrip() {
     el('div', { class: 'k' }, k), el('div', { class: 'v' }, v), el('div', { class: 'd' }, d));
 
   return el('div', { class: 'stat-strip' },
-    stat('Balance', `${fmt(a.balance, 0)}%`, 'evenness of the points split',
+    stat(t('stat.balance'), `${fmt(a.balance, 0)}%`, t('stat.balanceSub'),
       a.balance >= 92 ? 'tone-ok' : a.balance >= 80 ? '' : 'tone-warn'),
-    stat('Coverage', `${fmt(coverage, 0)}%`, `${a.assignedCount} of ${a.requiredCount} shifts filled`,
+    stat(t('stat.coverage'), `${fmt(coverage, 0)}%`,
+      t('stat.coverageSub', { assigned: a.assignedCount, required: a.requiredCount }),
       coverage >= 100 ? 'tone-ok' : coverage >= 90 ? 'tone-warn' : 'tone-bad'),
-    stat('Points spread', fmt(a.pointsSpread), 'heaviest minus lightest',
+    stat(t('stat.pointsSpread'), fmt(a.pointsSpread), t('stat.pointsSpreadSub'),
       a.pointsSpread <= 1 ? 'tone-ok' : a.pointsSpread <= 3 ? 'tone-warn' : 'tone-bad'),
-    stat('Weekend spread', fmt(a.weekendSpread, 0), 'weekend shifts, max − min',
+    stat(t('stat.weekendSpread'), fmt(a.weekendSpread, 0), t('stat.weekendSpreadSub'),
       a.weekendSpread <= 1 ? 'tone-ok' : 'tone-warn'),
-    stat('Engine score', fmt(a.score, 2), 'lower is fairer'),
+    stat(t('stat.score'), fmt(a.score, 2), t('stat.scoreSub')),
   );
 }
 
@@ -1102,7 +1124,7 @@ function renderCalendarPane() {
   if (signedIn() && state.scheduleId) {
     actions.push(el('button', {
       class: 'btn btn-ghost',
-      title: 'Re-solve the nights you have not pinned, moving as little as possible',
+      title: t('retuneHint'),
       onclick: async () => {
         try {
           const updated = await api.retune(state.department.id, state.scheduleId,
@@ -1110,14 +1132,14 @@ function renderCalendarPane() {
           adoptSchedule(updated);
           await refreshValidation();
           renderResult();
-          toast('ok', 'Re-tuned around your pinned nights');
-        } catch (err) { toast('err', 'Could not re-tune', err.message); }
+          toast('ok', t('toast.retuned'));
+        } catch (err) { toast('err', t('toast.editRefused'), err.message); }
       },
-    }, icon('i-history'), 'Re-tune'));
+    }, icon('i-history'), t('retune')));
   }
   actions.push(
-    el('button', { class: 'btn btn-ghost', onclick: () => window.print() }, icon('i-print'), 'Print'),
-    el('button', { class: 'btn btn-primary', onclick: generate }, icon('i-spark'), 'Regenerate'),
+    el('button', { class: 'btn btn-ghost', onclick: () => window.print() }, icon('i-print'), t('print')),
+    el('button', { class: 'btn btn-primary', onclick: generate }, icon('i-spark'), t('regenerate')),
   );
 
   const filter = el('div', { class: 'doc-filter' },
@@ -1128,10 +1150,10 @@ function renderCalendarPane() {
     }, doc.name)));
 
   const legend = el('div', { class: 'legend' },
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--holiday-bg);border-color:var(--holiday)' }), 'Holiday · 2.0'),
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--weekend-bg)' }), 'Weekend · 1.5 / 2.0'),
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'border-color:var(--danger)' }), 'Understaffed night'),
-    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'box-shadow:inset 0 0 0 1px var(--warn)' }), 'Back-to-back night'),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--holiday-bg);border-color:var(--holiday)' }), t('legend.holiday')),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'background:var(--weekend-bg)' }), t('legend.weekend')),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'border-color:var(--danger)' }), t('legend.short')),
+    el('span', { class: 'lg' }, el('span', { class: 'sw', style: 'box-shadow:inset 0 0 0 1px var(--warn)' }), t('legend.b2b')),
   );
 
   const months = el('div', { class: 'months' });
@@ -1145,7 +1167,7 @@ function renderCalendarPane() {
   for (const [key, nights] of byMonth) {
     const first = dateOf(nights[0].iso);
     const grid = el('div', { class: 'cal-grid' },
-      ...DOW.map((d) => el('div', { class: 'cal-dow' }, d)));
+      ...DOW().map((d) => el('div', { class: 'cal-dow' }, d)));
 
     for (let i = 0; i < dateOf(`${key}-01`).getDay(); i++) grid.append(el('div', { class: 'cal-cell is-blank' }));
     for (let d = 1; d < first.getDate(); d++) grid.append(el('div', { class: 'cal-cell is-blank' }));
@@ -1184,7 +1206,7 @@ function renderCalendarPane() {
         if (state.focusDoctor) chip.classList.add(state.focusDoctor === entry.name ? 'hit' : 'dim');
         if (a.locked?.has(`${entry.name}|${night.iso}`)) {
           chip.classList.add('is-locked');
-          chip.append(el('span', { class: 'cd-pin', title: 'Pinned — a re-solve leaves this alone' }, '●'));
+          chip.append(el('span', { class: 'cd-pin', title: t('menu.pinned') }, '●'));
         }
         if (signedIn() && state.scheduleId) {
           chip.classList.add('is-editable');
@@ -1200,7 +1222,8 @@ function renderCalendarPane() {
       cell.append(docs);
 
       if (night.short > 0) {
-        cell.append(el('span', { class: 'cal-flag' }, night.assigned.length ? `short ${night.short}` : 'unfilled'));
+        cell.append(el('span', { class: 'cal-flag' }, night.assigned.length
+          ? t('cal.shortBy', { count: night.short }) : t('cal.unfilled')));
       }
       grid.append(cell);
     }
@@ -1208,12 +1231,15 @@ function renderCalendarPane() {
     const filled = nights.reduce((s, n) => s + n.assigned.length, 0);
     months.append(el('div', {},
       el('div', { class: 'month-title' },
-        `${MONTHS[first.getMonth()]} ${first.getFullYear()}`,
-        el('span', { class: 'm-meta' }, `${plural(nights.length, 'night')} · ${plural(filled, 'shift')}`)),
+        monthLabel(first.getFullYear(), first.getMonth()),
+        el('span', { class: 'm-meta' },
+          t('cal.months', { nights: plural(nights.length, 'night'), shifts: plural(filled, 'shift') }))),
       grid));
   }
 
-  pane.replaceChildren(resultHeader(actions), statStrip(), validationBanner(), legend, filter, months);
+  pane.replaceChildren(
+    ...[resultHeader(actions), statStrip(), validationBanner(), legend, filter, months]
+      .filter(Boolean));
 }
 
 /** One measure across doctors, so one hue — rank is read from length. */
@@ -1238,7 +1264,7 @@ function renderFairnessPane() {
       <circle class="track" cx="60" cy="60" r="${r}"/>
       <circle class="val" cx="60" cy="60" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="${circ}"/>
     </svg>
-    <div class="gauge-num">${fmt(a.balance, 0)}<small>balance</small></div>`;
+    <div class="gauge-num">${fmt(a.balance, 0)}<small>${t('fair.balanceLabel')}</small></div>`;
   requestAnimationFrame(() => {
     const c = gauge.querySelector('.val');
     if (c) c.style.strokeDashoffset = String(circ * (1 - a.balance / 100));
@@ -1248,30 +1274,30 @@ function renderFairnessPane() {
   const heaviest = [...a.perDoctor].sort((x, y) => y.points - x.points)[0];
 
   const overview = el('div', { class: 'panel' },
-    el('h3', {}, icon('i-scale'), 'Points balance'),
-    el('div', { class: 'panel-sub' }, 'Weekdays 1.0 · Saturdays 1.5 · Sundays and holidays 2.0'),
+    el('h3', {}, icon('i-scale'), t('fair.points')),
+    el('div', { class: 'panel-sub' }, t('fair.pointsSub')),
     el('div', { class: 'gauge-wrap' }, gauge,
       el('div', { class: 'gauge-legend' },
-        el('div', {}, 'Average load ', el('b', {}, `${fmt(a.mean)} points`)),
-        heaviest ? el('div', {}, 'Heaviest ', el('b', {}, `${heaviest.name} · ${fmt(heaviest.points)}`)) : null,
-        lightest ? el('div', {}, 'Lightest ', el('b', {}, `${lightest.name} · ${fmt(lightest.points)}`)) : null,
-        el('div', {}, 'Spread ', el('b', {}, fmt(a.pointsSpread)), ' points'))));
+        el('div', {}, `${t('fair.average')} `, el('b', {}, `${fmt(a.mean)} ${t('fair.points.word')}`)),
+        heaviest ? el('div', {}, `${t('fair.heaviest')} `, el('b', {}, `${heaviest.name} · ${fmt(heaviest.points)}`)) : null,
+        lightest ? el('div', {}, `${t('fair.lightest')} `, el('b', {}, `${lightest.name} · ${fmt(lightest.points)}`)) : null,
+        el('div', {}, `${t('fair.spread')} `, el('b', {}, fmt(a.pointsSpread)), ` ${t('fair.points.word')}`))));
 
   /* Points bars */
   const maxPts = Math.max(...a.perDoctor.map((d) => d.points), 1);
   const sortedByPoints = [...a.perDoctor].sort((x, y) => y.points - x.points);
   const pointsPanel = el('div', { class: 'panel' },
-    el('h3', {}, icon('i-users'), 'Load per doctor'),
-    el('div', { class: 'panel-sub' }, 'Total points earned across the period'),
+    el('h3', {}, icon('i-users'), t('fair.load')),
+    el('div', { class: 'panel-sub' }, t('fair.loadSub')),
     el('div', { class: 'bars' }, ...sortedByPoints.map((d, i) => bar(d.name, d.points, maxPts, {
-      note: i === 0 ? 'heaviest' : i === sortedByPoints.length - 1 ? 'lightest' : '',
+      note: i === 0 ? t('fair.heaviest') : i === sortedByPoints.length - 1 ? t('fair.lightest') : '',
     }))));
 
   /* Weekend bars */
   const maxWe = Math.max(...a.perDoctor.map((d) => d.weekendShifts), 1);
   const weekendPanel = el('div', { class: 'panel' },
-    el('h3', {}, icon('i-calendar'), 'Weekend & holiday duty'),
-    el('div', { class: 'panel-sub' }, 'The nights people actually count'),
+    el('h3', {}, icon('i-calendar'), t('fair.weekend')),
+    el('div', { class: 'panel-sub' }, t('fair.weekendSub')),
     el('div', { class: 'bars' }, ...[...a.perDoctor].sort((x, y) => y.weekendShifts - x.weekendShifts).map((d) =>
       bar(d.name, d.weekendShifts, maxWe, {
         valueText: `${d.weekendShifts}${d.holidayShifts ? ` +${d.holidayShifts}h` : ''}`,
@@ -1280,8 +1306,8 @@ function renderFairnessPane() {
   /* Spacing strip */
   const list = days();
   const stripPanel = el('div', { class: 'panel', style: 'grid-column:1/-1' },
-    el('h3', {}, icon('i-spark'), 'Rhythm'),
-    el('div', { class: 'panel-sub' }, 'One block per night. Filled = on call, dimmed = weekend, amber = holiday, hatched = booked leave, ringed = back-to-back.'),
+    el('h3', {}, icon('i-spark'), t('fair.rhythm')),
+    el('div', { class: 'panel-sub' }, t('fair.rhythmSub')),
     el('div', { class: 'strip-rows' }, ...a.perDoctor.map((d) => {
       const strip = el('div', { class: 'strip' });
       for (const iso of list) {
@@ -1318,25 +1344,25 @@ function renderFairnessPane() {
     el('td', { class: 'num' }, d.minGap === null ? '—' : plural(d.minGap, 'night')),
     el('td', { class: 'num' }, d.avgGap === null ? '—' : fmt(d.avgGap)),
     el('td', {}, d.violations.length
-      ? el('span', { class: 'tag bad' }, `${d.violations.length} leave clash`)
-      : d.backToBack ? el('span', { class: 'tag warn' }, `${d.backToBack} back-to-back`)
-        : el('span', { class: 'tag ok' }, 'clean')),
+      ? el('span', { class: 'tag bad' }, t('flag.leaveClash', { count: d.violations.length }))
+      : d.backToBack ? el('span', { class: 'tag warn' }, t('flag.b2b', { count: d.backToBack }))
+        : el('span', { class: 'tag ok' }, t('flag.clean'))),
   ));
 
   const table = el('div', { class: 'panel', style: 'grid-column:1/-1' },
-    el('h3', {}, icon('i-users'), 'Doctor by doctor'),
-    el('div', { class: 'panel-sub' }, 'Gap = nights between consecutive shifts'),
+    el('h3', {}, icon('i-users'), t('fair.table')),
+    el('div', { class: 'panel-sub' }, t('fair.tableSub')),
     el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
       el('thead', {}, el('tr', {},
-        el('th', {}, 'Doctor'),
-        state.graded ? el('th', {}, 'Grade') : null,
-        el('th', { class: 'num' }, 'Shifts'),
-        el('th', { class: 'num' }, 'Weekend'),
-        el('th', { class: 'num' }, 'Holiday'),
-        el('th', { class: 'num' }, 'Points'),
-        el('th', { class: 'num' }, 'Min gap'),
-        el('th', { class: 'num' }, 'Avg gap'),
-        el('th', {}, 'Flags'))),
+        el('th', {}, t('th.doctor')),
+        state.graded ? el('th', {}, t('th.grade')) : null,
+        el('th', { class: 'num' }, t('th.shifts')),
+        el('th', { class: 'num' }, t('th.weekend')),
+        el('th', { class: 'num' }, t('th.holiday')),
+        el('th', { class: 'num' }, t('th.pointsCol')),
+        el('th', { class: 'num' }, t('th.minGap')),
+        el('th', { class: 'num' }, t('th.avgGap')),
+        el('th', {}, t('th.flags')))),
       el('tbody', {}, ...rows))));
 
   pane.replaceChildren(
@@ -1381,7 +1407,7 @@ function scheduleCsv() {
   const rows = [['Date', 'Weekday', 'Weight', 'Doctors on call', 'Grades', 'Required', 'Assigned']];
   for (const night of a.perNight) {
     rows.push([
-      night.iso, DOW[dowOf(night.iso)], fmt(night.weight),
+      night.iso, DOW()[dowOf(night.iso)], fmt(night.weight),
       night.assigned.map((e) => e.name).join('; '),
       state.graded ? night.assigned.map((e) => gradeOf[e.name]).join('; ') : '',
       night.need, night.assigned.length,
@@ -1443,40 +1469,40 @@ function renderExportPane() {
 
   pane.replaceChildren(resultHeader(),
     el('div', { class: 'export-grid' },
-      card('i-download', 'Rota as CSV', 'One row per night with everyone on call — opens in Excel or Sheets.',
-        () => { download(`${slug}.csv`, scheduleCsv(), 'text/csv'); toast('ok', 'CSV downloaded'); }),
-      card('i-users', 'Workload as CSV', 'Per-doctor totals: shifts, weekends, holidays, points and gaps.',
-        () => { download(`${slug}-workload.csv`, doctorCsv(), 'text/csv'); toast('ok', 'Workload CSV downloaded'); }),
+      card('i-download', t('export.csv'), 'One row per night with everyone on call — opens in Excel or Sheets.',
+        () => { download(`${slug}.csv`, scheduleCsv(), 'text/csv'); toast('ok', t('toast.downloaded')); }),
+      card('i-users', t('export.workload'), 'Per-doctor totals: shifts, weekends, holidays, points and gaps.',
+        () => { download(`${slug}-workload.csv`, doctorCsv(), 'text/csv'); toast('ok', t('toast.downloaded')); }),
       card('i-calendar', 'Calendar file (.ics)', `${analysis.assignedCount} all-day events — import into Outlook, Google or Apple Calendar.`,
-        () => { download(`${slug}.ics`, icsFile(), 'text/calendar'); toast('ok', 'Calendar file downloaded'); }),
-      card('i-print', 'Print / PDF', 'A clean ward-noticeboard layout, no controls.', () => window.print()),
-      card('i-copy', 'Copy JSON', 'The raw API response, for pasting elsewhere.',
+        () => { download(`${slug}.ics`, icsFile(), 'text/calendar'); toast('ok', t('toast.downloaded')); }),
+      card('i-print', t('export.print'), 'A clean ward-noticeboard layout, no controls.', () => window.print()),
+      card('i-copy', t('export.json'), 'The raw API response, for pasting elsewhere.',
         async () => {
           try {
             await navigator.clipboard.writeText(JSON.stringify(response, null, 2));
-            toast('ok', 'Response copied to clipboard');
-          } catch { toast('err', 'Clipboard blocked', 'Select the JSON below and copy manually.'); }
+            toast('ok', t('toast.copied'));
+          } catch { toast('err', t('toast.clipboardBlocked')); }
         }),
       ...(signedIn() && state.scheduleId ? [
-        card('i-print', 'PDF · diary', 'One row per night, A4 portrait. Rendered on the server.',
-          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'vertical'), '_blank')),
-        card('i-users', 'PDF · wall chart', 'Doctors as columns, A4 landscape.',
-          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'horizontal'), '_blank')),
-        card('i-calendar', 'PDF · noticeboard', 'Month grid, A4 landscape.',
-          () => window.open(api.pdfUrl(state.department.id, state.scheduleId, 'calendar'), '_blank')),
-        card('i-spark', 'Create a share link', 'A read-only page anyone can open without an account.',
+        card('i-print', t('export.pdfDiary'), 'One row per night, A4 portrait. Rendered on the server.',
+          () => window.open(`${api.pdfUrl(state.department.id, state.scheduleId, 'vertical')}&lang=${locale()}`, '_blank')),
+        card('i-users', t('export.pdfWall'), 'Doctors as columns, A4 landscape.',
+          () => window.open(`${api.pdfUrl(state.department.id, state.scheduleId, 'horizontal')}&lang=${locale()}`, '_blank')),
+        card('i-calendar', t('export.pdfBoard'), 'Month grid, A4 landscape.',
+          () => window.open(`${api.pdfUrl(state.department.id, state.scheduleId, 'calendar')}&lang=${locale()}`, '_blank')),
+        card('i-spark', t('export.share'), 'A read-only page anyone can open without an account.',
           createShareLink),
       ] : []),
-      card('i-spark', 'Copy request payload', 'Reproduce this exact run against the API.',
+      card('i-spark', t('export.payload'), 'Reproduce this exact run against the API.',
         async () => {
           try {
             await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-            toast('ok', 'Payload copied to clipboard');
-          } catch { toast('err', 'Clipboard blocked'); }
+            toast('ok', t('toast.copied'));
+          } catch { toast('err', t('toast.clipboardBlocked')); }
         })),
-    signedIn() && state.scheduleId ? el('div', { class: 'panel', id: 'sharePanel' }) : null,
+    ...(signedIn() && state.scheduleId ? [el('div', { class: 'panel', id: 'sharePanel' })] : []),
     el('div', { class: 'panel' },
-      el('h3', {}, icon('i-download'), 'API response'),
+      el('h3', {}, icon('i-download'), t('export.response')),
       el('div', { class: 'panel-sub' }, `${analysis.name} · score ${fmt(analysis.score, 3)}`),
       el('pre', { class: 'json', html: highlightJson(response) })));
 
@@ -1489,7 +1515,7 @@ function renderHistoryPane() {
   const pane = $('#pane-history');
   if (signedIn()) return renderSavedSchedules(pane);
   if (!state.runs.length) {
-    pane.replaceChildren(el('div', { class: 'empty-note' }, 'No runs yet. Generated rotas are kept here so you can compare and restore them.'));
+    pane.replaceChildren(el('div', { class: 'empty-note' }, t('history.emptyLocal')));
     return;
   }
 
@@ -1510,7 +1536,7 @@ function renderHistoryPane() {
       el('div', { class: 'run-actions' },
         isCurrent ? null : el('button', {
           class: 'btn btn-ghost', onclick: () => restoreRun(run),
-        }, 'Open'),
+        }, t('history.open')),
         el('button', {
           class: 'btn btn-ghost', title: 'Delete',
           onclick: () => { state.runs = state.runs.filter((r) => r !== run); saveRuns(); renderHistoryPane(); },
@@ -1520,13 +1546,13 @@ function renderHistoryPane() {
   pane.replaceChildren(
     el('div', { class: 'result-head' },
       el('div', { class: 'result-title' },
-        el('h2', {}, 'Run history'),
-        el('span', { class: 'sub' }, `${plural(state.runs.length, 'rota')} kept on this device`)),
+        el('h2', {}, t('history.local')),
+        el('span', { class: 'sub' }, t('history.localSub', { count: plural(state.runs.length, 'rota') }))),
       el('div', { class: 'result-actions' },
         el('button', {
           class: 'btn btn-ghost',
           onclick: () => { state.runs = []; saveRuns(); renderHistoryPane(); },
-        }, 'Clear history'))),
+        }, t('history.clear')))),
     el('div', { class: 'runs' }, ...rows));
 }
 
@@ -1540,7 +1566,7 @@ function restoreRun(run) {
   state.focusDoctor = null;
   $('#emptyState').hidden = true;
   renderResult();
-  toast('info', 'Rota restored', run.id);
+  toast('info', t('toast.restored'), run.id);
 }
 
 /* ─────────────────────────── tabs, toasts, chrome ─────────────────────────── */
@@ -1618,7 +1644,7 @@ function loadDemo() {
   };
   state.availDoctor = state.doctors[0].name;
   onConfigChange();
-  toast('info', 'Demo department loaded', '10 doctors, 2 on call each night, two blocks of leave and one public holiday.');
+  toast('info', t('toast.demo'), t('toast.demoSub'));
 }
 
 /* ─────────────────────────── wiring ─────────────────────────── */
@@ -1651,7 +1677,7 @@ function wire() {
   $('#doctorInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addFromInput(); } });
   $('#doctorInput').addEventListener('paste', (e) => {
     const text = (e.clipboardData || window.clipboardData).getData('text');
-    if (text && /[,\n;]/.test(text)) { e.preventDefault(); const n = addDoctors(text); toast('ok', `${plural(n, 'doctor')} added`); }
+    if (text && /[,\n;]/.test(text)) { e.preventDefault(); const n = addDoctors(text); toast('ok', t('roster.added', { count: plural(n, 'doctor') })); }
   });
 
   $('#demoBtn').addEventListener('click', loadDemo);
@@ -1725,7 +1751,7 @@ function wire() {
     if (!state.autoSave) { try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ } }
     saveState();
     checkApi();
-    toast('ok', 'Settings saved');
+    toast('ok', t('settings.saved'));
   });
 
   document.addEventListener('keydown', (e) => {
@@ -1773,7 +1799,7 @@ function renderAccount() {
   signIn.hidden = true;
   account.hidden = false;
   account.textContent = state.session.name || state.session.email;
-  account.title = `${state.session.email} — click to sign out`;
+  account.title = t('auth.signOutTitle', { email: state.session.email });
 
   picker.hidden = state.departments.length < 2;
   picker.replaceChildren(...state.departments.map((d) =>
@@ -1900,10 +1926,13 @@ async function generateOnServer() {
     renderResult();
     revealResults();
     const m = schedule.metrics || {};
-    toast('ok', 'Rota saved', `${m.assigned} shifts · balance ${fmt(m.balance, 0)}% · ${schedule.solver_status}`);
+    toast('ok', t('toast.saved'), t('toast.generatedSub', {
+      shifts: plural(m.assigned, 'shift'),
+      seconds: fmt(schedule.solve_seconds || 0), balance: fmt(m.balance, 0),
+    }));
   } catch (err) {
     const reasons = err instanceof ApiError ? err.reasons : [];
-    toast('err', 'Could not generate a rota', reasons.length ? reasons.join(' ') : err.message);
+    toast('err', t('toast.failed'), reasons.length ? reasons.join(' ') : err.message);
   } finally {
     overlay.hidden = true;
     renderPreflight();
@@ -1939,7 +1968,7 @@ async function editAssignment(action, body) {
     await api[action](state.department.id, state.scheduleId, body);
     await refreshSchedule();
   } catch (err) {
-    toast('err', 'Edit refused', err.message);
+    toast('err', t('toast.editRefused'), err.message);
   }
 }
 
@@ -1954,24 +1983,24 @@ function openShiftMenu(entry, iso, anchor) {
   const locked = state.result.analysis.locked?.has(`${entry.name}|${iso}`);
 
   const menu = el('div', { class: 'shift-menu', id: 'shiftMenu' },
-    el('div', { class: 'sm-head' }, `${entry.name} · ${prettyDate(iso)}`),
+    el('div', { class: 'sm-head' }, t('menu.on', { name: entry.name, date: prettyDate(iso) })),
     el('button', {
       class: 'sm-item',
       onclick: () => { closeShiftMenu(); editAssignment('unassign', { doctor_id: doctor.id, date: iso }); },
-    }, 'Take off this night'),
+    }, t('menu.takeOff')),
     el('button', {
       class: 'sm-item',
       onclick: () => {
         closeShiftMenu();
         editAssignment('lock', { doctor_id: doctor.id, date: iso, locked: !locked });
       },
-    }, locked ? 'Unpin (allow re-solving)' : 'Pin to this night'),
-    el('div', { class: 'sm-label' }, 'Swap with'),
+    }, locked ? t('menu.unpin') : t('menu.pin')),
+    el('div', { class: 'sm-label' }, t('menu.swapWith')),
   );
 
   const candidates = state.doctors.filter((d) => !onCall.has(d.name));
   if (!candidates.length) {
-    menu.append(el('div', { class: 'sm-empty' }, 'Everyone else is already on call.'));
+    menu.append(el('div', { class: 'sm-empty' }, t('menu.allOn')));
   }
   for (const other of candidates.slice(0, 12)) {
     const off = isOff(other.name, iso);
@@ -1982,7 +2011,7 @@ function openShiftMenu(entry, iso, anchor) {
         closeShiftMenu();
         editAssignment('swap', { date: iso, doctor_out: doctor.id, doctor_in: other.id });
       },
-    }, other.name, off ? el('span', { class: 'sm-tag' }, 'on leave') : null));
+    }, other.name, off ? el('span', { class: 'sm-tag' }, t('menu.onLeave')) : null));
   }
 
   document.body.append(menu);
@@ -2002,12 +2031,12 @@ function closeShiftMenu() {
 function openAuth(mode = 'login') {
   state.authMode = mode;
   const signup = mode === 'signup';
-  $('#authTitle').textContent = signup ? 'Create an account' : 'Sign in';
-  $('#authSubmit').textContent = signup ? 'Create account' : 'Sign in';
+  $('#authTitle').textContent = signup ? t('auth.signUp') : t('auth.signIn');
+  $('#authSubmit').textContent = signup ? t('auth.create') : t('auth.signIn');
   $('#authNameField').hidden = !signup;
   $('#authDeptField').hidden = !signup;
-  $('#authSwitchText').textContent = signup ? 'Already have an account?' : 'No account yet?';
-  $('#authSwitch').textContent = signup ? 'Sign in' : 'Create one';
+  $('#authSwitchText').textContent = signup ? t('auth.haveAccount') : t('auth.noAccount');
+  $('#authSwitch').textContent = signup ? t('auth.signIn') : t('auth.createOne');
   $('#authPassword').autocomplete = signup ? 'new-password' : 'current-password';
   $('#authError').hidden = true;
   $('#authModal').showModal();
@@ -2039,10 +2068,11 @@ async function submitAuth(event) {
     const remote = await api.doctors(state.department.id);
     if (carried && !remote.length) {
       await syncRoster();
-      toast('ok', `Signed in as ${state.session.name}`, `Your ${plural(carried, 'doctor')} moved across.`);
+      toast('ok', t('auth.signedIn', { name: state.session.name }),
+        t('auth.carried', { count: plural(carried, 'doctor') }));
     } else {
       await loadRoster();
-      toast('ok', `Signed in as ${state.session.name}`, state.department?.name || '');
+      toast('ok', t('auth.signedIn', { name: state.session.name }), state.department?.name || '');
     }
     await loadServerSchedules();
     renderPreflight();
@@ -2064,7 +2094,7 @@ async function signOut() {
   state.validation = null;
   renderAccount();
   renderHistoryPane();
-  toast('info', 'Signed out', 'The studio keeps working without an account.');
+  toast('info', t('auth.signedOut'), t('auth.signedOutSub'));
 }
 
 async function bootSession() {
@@ -2108,8 +2138,7 @@ function validationBanner() {
   if (v.ok && !v.warnings.length) {
     return el('div', { class: 'pf-item ok', style: 'margin-bottom:16px' },
       icon('i-check'),
-      el('span', {}, el('b', {}, 'This rota is valid'),
-        el('em', {}, 'Coverage, leave and rest all check out against the department rules.')));
+      el('span', {}, el('b', {}, t('valid.ok')), el('em', {}, t('valid.okSub'))));
   }
   const items = [...v.errors.map((t) => ['bad', t]), ...v.warnings.slice(0, 6).map((t) => ['warn', t])];
   return el('div', { style: 'display:flex;flex-direction:column;gap:7px;margin-bottom:16px' },
@@ -2117,7 +2146,7 @@ function validationBanner() {
       icon('i-alert'), el('span', {}, text))),
     v.errors.length
       ? null
-      : el('div', { class: 'hint' }, 'Warnings do not block publishing.'));
+      : el('div', { class: 'hint' }, t('valid.warnNote')));
 }
 
 /* ─────────────────────── saved schedules & sharing ─────────────────────── */
@@ -2126,7 +2155,7 @@ function savedScheduleRow(row) {
   const m = row.metrics || {};
   const current = row.id === state.scheduleId;
 
-  const open = el('button', { class: 'btn btn-ghost' }, 'Open');
+  const open = el('button', { class: 'btn btn-ghost' }, t('history.open'));
   open.addEventListener('click', async () => {
     const full = await api.schedule(state.department.id, row.id);
     adoptSchedule(full);
@@ -2136,7 +2165,7 @@ function savedScheduleRow(row) {
     showTab('calendar');
   });
 
-  const remove = el('button', { class: 'btn btn-ghost', title: 'Delete' }, icon('i-x'));
+  const remove = el('button', { class: 'btn btn-ghost', title: t('history.delete') }, icon('i-x'));
   remove.addEventListener('click', async () => {
     await api.deleteSchedule(state.department.id, row.id);
     if (current) {
@@ -2172,13 +2201,14 @@ function renderSavedSchedules(pane) {
   const rows = state.serverSchedules;
   const header = el('div', { class: 'result-head' },
     el('div', { class: 'result-title' },
-      el('h2', {}, 'Saved rotas'),
+      el('h2', {}, t('history.saved')),
       el('span', { class: 'sub' },
-        `${plural(rows.length, 'rota')} in ${state.department?.name || 'this department'}`)));
+        t('history.savedSub', { count: plural(rows.length, 'rota'),
+          department: state.department?.name || '' }))));
 
   if (!rows.length) {
     pane.replaceChildren(header, el('div', { class: 'empty-note' },
-      'Nothing saved yet. Generate a rota and it is kept here for your whole department.'));
+      t('history.emptyServer')));
     return;
   }
 
@@ -2193,13 +2223,13 @@ async function createShareLink() {
     });
     try {
       await navigator.clipboard.writeText(share.url);
-      toast('ok', 'Share link copied', 'Read-only, no account needed.');
+      toast('ok', t('share.copied'), t('share.copiedSub'));
     } catch {
-      toast('ok', 'Share link created', share.url);
+      toast('ok', t('share.copied'), share.url);
     }
     await renderSharePanel(share.url);
   } catch (err) {
-    toast('err', 'Could not create a share link', err.message);
+    toast('err', t('toast.failed'), err.message);
   }
 }
 
@@ -2209,17 +2239,16 @@ async function renderSharePanel(justCreated = null) {
   const links = await api.shares(state.department.id, state.scheduleId).catch(() => []);
 
   host.replaceChildren(
-    el('h3', {}, icon('i-spark'), 'Share links'),
-    el('div', { class: 'panel-sub' },
-      'Read-only pages that need no account. Only a hash of each token is stored, so a link can be revoked but never recovered.'),
+    el('h3', {}, icon('i-spark'), t('share.title')),
+    el('div', { class: 'panel-sub' }, t('share.sub')),
     justCreated
       ? el('div', { class: 'share-new' },
         el('input', { type: 'text', readonly: true, value: justCreated, onclick: (e) => e.target.select() }),
         el('button', {
           class: 'btn btn-ghost',
           onclick: () => navigator.clipboard.writeText(justCreated)
-            .then(() => toast('ok', 'Copied')).catch(() => {}),
-        }, icon('i-copy'), 'Copy'))
+            .then(() => toast('ok', t('toast.copied'))).catch(() => {}),
+        }, icon('i-copy'), t('share.copy')))
       : null,
     links.length
       ? el('div', { class: 'runs' }, ...links.map((link) => el('div', { class: 'run-row' },
@@ -2233,8 +2262,37 @@ async function renderSharePanel(justCreated = null) {
           onclick: async () => {
             await api.revokeShare(state.department.id, state.scheduleId, link.id);
             await renderSharePanel();
-            toast('info', 'Link revoked');
+            toast('info', t('share.revoked'));
           },
-        }, 'Revoke'))))
-      : el('div', { class: 'empty-note' }, 'No links yet.'));
+        }, t('share.revoke')))))
+      : el('div', { class: 'empty-note' }, t('share.none')));
 }
+
+/* ─────────────────────────── language ─────────────────────────── */
+
+function renderLanguagePicker() {
+  const picker = $('#langPicker');
+  picker.replaceChildren(...Object.entries(LOCALES).map(([code, meta]) =>
+    el('option', { value: code, selected: code === state.locale }, meta.label)));
+}
+
+/** Switching language re-renders everything, including the result panes. */
+function applyLocale(code) {
+  state.locale = setLocale(code);
+  translateDom();
+  renderLanguagePicker();
+  renderAccount();
+  onConfigChange();
+  if (state.result) renderResult();
+  else showTab(state.activeTab);
+  saveState();
+}
+
+function wireLanguage() {
+  state.locale = setLocale(detectLocale(state.locale));
+  translateDom();
+  renderLanguagePicker();
+  $('#langPicker').addEventListener('change', (e) => applyLocale(e.target.value));
+}
+
+wireLanguage();

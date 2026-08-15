@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libffi8 \
         shared-mime-info \
         fonts-dejavu-core \
+        fonts-noto-core \
         curl \
     && rm -rf /var/lib/apt/lists/*
 

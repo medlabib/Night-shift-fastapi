@@ -24,22 +24,24 @@
   table.grid .on.hol { background: #d2691a; }
   table.grid td.tot { font-weight: 700; font-variant-numeric: tabular-nums; }
   table.grid tr.totals td { border-top: .8pt solid #c9d1e6; border-bottom: none; font-size: 7pt; }
+  html[dir="rtl"] table.grid td.date { text-align: right; }
+  html[dir="rtl"] table.grid td { text-align: center; }
 </style>
 
 <table class="grid">
   <thead>
     <tr>
-      <th style="width:20mm">Night</th>
+      <th style="width:22mm">{{ t('pdf.night') }}</th>
       {% for d in doctors %}<th class="doc"><div class="rot">{{ d.name }}</div></th>{% endfor %}
-      <th style="width:9mm" class="center">On</th>
+      <th style="width:11mm" class="center">{{ t('pdf.on') }}</th>
     </tr>
   </thead>
   <tbody>
     {% for night in nights %}
     <tr class="{% if night.holiday %}holiday{% elif night.weekend %}weekend{% endif %}">
       <td class="date">
-        <b>{{ night.date.strftime('%d %b') }}</b>
-        <span class="muted">{{ night.date.strftime('%a') }}</span>
+        <b>{{ tr.short_date(night.date) }}</b>
+        <span class="muted">{{ tr.weekday(night.date, short=True) }}</span>
       </td>
       {% for d in doctors %}
       <td>
@@ -52,12 +54,12 @@
     </tr>
     {% endfor %}
     <tr class="totals">
-      <td class="date muted">Shifts</td>
+      <td class="date muted">{{ t('pdf.shifts') }}</td>
       {% for d in doctors %}<td class="tot">{{ d.shifts }}</td>{% endfor %}
       <td></td>
     </tr>
     <tr class="totals">
-      <td class="date muted">Points</td>
+      <td class="date muted">{{ t('pdf.pointsFull') }}</td>
       {% for d in doctors %}<td class="tot">{{ d.points }}</td>{% endfor %}
       <td></td>
     </tr>

@@ -138,6 +138,29 @@ which re-solves everything else while paying a penalty for moving what people ha
 seen. Every edit is checked server-side against the same rules the solver enforces, and the
 verdict sits above the calendar.
 
+## Languages
+
+English, French and Arabic, switchable from the top bar and remembered per device.
+
+Arabic is why this is more than a string table. The layout mirrors (`dir="rtl"`), the
+config panel moves to the right, borders and rails that mark state move to the other edge,
+and bar charts fill from the other side — while tabular numbers stay left-to-right, because
+digits do. Month and weekday names come from `Intl`, not a hard-coded English list, so each
+language gets its own. Numbers are formatted per locale: French writes 1,5 where English
+writes 1.5.
+
+Plurals follow each language's own rules through `Intl.PluralRules`. Arabic has six
+categories, so 1 doctor is `طبيب واحد`, 2 is `طبيبان`, and 10 is `10 أطباء` — not an English
+"s" bolted onto a translated noun.
+
+PDFs are localised too: `?lang=en|fr|ar` on the export endpoints translates the headings,
+formats the dates, and flips the page to RTL for Arabic. DejaVu Sans shapes Arabic
+correctly, and the Docker image installs Noto for better coverage.
+
+Adding a language means adding one block to `static/i18n.js` (the interface) and one to
+`app/i18n.py` (PDFs and server messages). Anything missing falls back to English rather
+than showing a raw key.
+
 ## API
 
 Everything under `/api` needs a session cookie, obtained from signup or login.
