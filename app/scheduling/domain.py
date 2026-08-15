@@ -15,6 +15,15 @@ DEFAULT_WEIGHTS = {"weekday": 1.0, "saturday": 1.5, "sunday": 2.0, "holiday": 2.
 # Points are scaled to integers for CP-SAT, which is exact only over integers.
 SCALE = 10
 
+# How far carried-forward history is allowed to tilt a new rota. Without a
+# ceiling, one doctor returning from a long absence would absorb an entire
+# month to "catch up" — technically fairer over the quarter, unliveable in
+# September. Ten points is roughly a week of extra nights.
+CARRY_CAP_POINTS = 10.0
+CARRY_CAP_WEEKENDS = 3.0
+# How far back to look when carrying balance forward, in days.
+CARRY_WINDOW_DAYS = 90
+
 
 def weight_for(day: dt.date, holidays: set[dt.date], weights: dict[str, float] | None = None) -> float:
     w = {**DEFAULT_WEIGHTS, **(weights or {})}
@@ -86,6 +95,20 @@ class RotaRequest:
     # Features: "dow:<0-6>", "date:<iso>", "partner:<doctor_id>".
     preferences: dict[tuple[str | None, str], float] = field(default_factory=dict)
 
+    # ── balance carried in from earlier periods ──
+    # Fairness measured only inside one rota resets every month, so whoever
+    # draws the heaviest September can draw the heaviest October too. These
+    # are what each doctor already worked in the look-back window; the solver
+    # adds them to this period's totals and evens out the sum.
+    prior_points: dict[str, float] = field(default_factory=dict)
+    prior_weekends: dict[str, float] = field(default_factory=dict)
+    # Doctors who were not on the roster for the whole window. They have no
+    # comparable history, so they count as average rather than as having done
+    # nothing — joining last week is not a reason to be handed a heavy month.
+    prior_partial: set[str] = field(default_factory=set)
+    carry_cap_points: float = CARRY_CAP_POINTS
+    carry_cap_weekends: float = CARRY_CAP_WEEKENDS
+
     time_limit: float = 10.0
     workers: int = 8
 
@@ -110,6 +133,10 @@ class RotaRequest:
 
     def doctors_in(self, grade: str) -> list[Doctor]:
         return [d for d in self.doctors if d.grade == grade]
+
+    @property
+    def carries_forward(self) -> bool:
+        return bool(self.prior_points or self.prior_weekends)
 
     def seats(self) -> int:
         """Total doctor-nights this request asks for."""

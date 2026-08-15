@@ -45,6 +45,22 @@ services:
       # oversubscribing a shared CPU.
       - key: SOLVER_WORKERS
         value: "0"
+      # Links in outgoing email. Render assigns the hostname, so set this to
+      # the service URL once the first deploy has told you what it is.
+      - key: PUBLIC_URL
+        sync: false
+      # Invitations and password resets go nowhere until an SMTP host is
+      # configured. Add these in the dashboard rather than committing them.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
 
 databases:
   - name: night-shift-db

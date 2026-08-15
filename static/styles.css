@@ -1219,3 +1219,51 @@ pre.json .n { color: var(--text-dim); }
 @media (max-width: 560px) {
   [dir="rtl"] .toasts { left: var(--s2); right: var(--s2); }
 }
+
+/* ───────────────────────── Team ─────────────────────────
+   Accounts, calendar feeds, and the requests waiting on a coordinator. */
+
+.team-block { margin-bottom: var(--s5, 26px); }
+.team-block:last-child { margin-bottom: 0; }
+
+/* The roster rows carry a select and a button, which need room to breathe
+   without the name column collapsing. */
+.team-block .run-actions { display: flex; align-items: center; gap: 8px; }
+.team-block .run-actions select { max-width: 190px; }
+
+.leave-form {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+  padding: 14px 15px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.leave-form .field { min-width: 140px; }
+.leave-form .field.grow { flex: 1; min-width: 180px; }
+
+/* A wide, shallow grid: one column per doctor rather than one row each, so a
+   whole department's carried balance is legible at a glance. */
+.carry-rows {
+  display: grid; gap: 8px; margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.carry-row {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--line-soft);
+}
+.carry-row > span { font-size: 12.5px; color: var(--text-dim); }
+.carry-row b { font-variant-numeric: tabular-nums; }
+.carry-row em { font-style: normal; font-size: 11.5px; color: var(--text-faint); }
+
+@media (max-width: 620px) {
+  .team-block .run-row { flex-wrap: wrap; }
+  .team-block .run-actions { width: 100%; }
+  .team-block .run-actions select { max-width: none; flex: 1; }
+  .carry-rows { grid-template-columns: 1fr 1fr; }
+}
+
+/* Tabular figures stay left-to-right; the row order itself mirrors. */
+[dir="rtl"] .carry-row b { direction: ltr; }

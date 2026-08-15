@@ -37,11 +37,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, base = '' } = {}) {
+async function request(path, { method = 'GET', body, base = '', form } = {}) {
+  // FormData sets its own multipart boundary, so the JSON header must not be
+  // sent with it.
+  const payloadBody = form !== undefined ? form : body === undefined ? undefined : JSON.stringify(body);
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: body === undefined ? undefined : JSON_HEADERS,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: form !== undefined || body === undefined ? undefined : JSON_HEADERS,
+    body: payloadBody,
     credentials: 'same-origin', // the session is an HttpOnly cookie
   });
 
@@ -67,6 +70,12 @@ export const api = {
   logout: () => api.call('/api/auth/logout', { method: 'POST' }),
   requestReset: (email) =>
     api.call('/api/auth/password/reset-request', { method: 'POST', body: { email } }),
+  resetPassword: (token, newPassword) =>
+    api.call('/api/auth/password/reset', {
+      method: 'POST', body: { token, new_password: newPassword },
+    }),
+  setLocale: (locale) => api.call('/api/auth/locale', { method: 'POST', body: { locale } }),
+  acceptInvite: (token) => api.call(`/api/invites/${token}/accept`, { method: 'POST' }),
 
   // ── departments & roster ──
   departments: () => api.call('/api/departments'),
@@ -118,6 +127,50 @@ export const api = {
     api.call(`/api/departments/${dep}/schedules/${id}/shares`, { method: 'POST', body }),
   revokeShare: (dep, id, share) =>
     api.call(`/api/departments/${dep}/schedules/${id}/shares/${share}`, { method: 'DELETE' }),
+
+  // ── roster import, account links and calendar feeds ──
+  importRoster: (dep, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.call(`/api/departments/${dep}/doctors/import`, { method: 'POST', form });
+  },
+  members: (dep) => api.call(`/api/departments/${dep}/members`),
+  invite: (dep, body) => api.call(`/api/departments/${dep}/invites`, { method: 'POST', body }),
+  linkDoctor: (dep, id, userId) =>
+    api.call(`/api/departments/${dep}/doctors/${id}/link`, {
+      method: 'POST', body: { user_id: userId },
+    }),
+  unlinkDoctor: (dep, id) =>
+    api.call(`/api/departments/${dep}/doctors/${id}/link`, { method: 'DELETE' }),
+  createFeed: (dep, id) =>
+    api.call(`/api/departments/${dep}/doctors/${id}/feed`, { method: 'POST' }),
+  revokeFeed: (dep, id) =>
+    api.call(`/api/departments/${dep}/doctors/${id}/feed`, { method: 'DELETE' }),
+
+  // ── requests raised by doctors ──
+  inbox: (dep) => api.call(`/api/departments/${dep}/requests`),
+  decideTimeOff: (dep, id, body) =>
+    api.call(`/api/departments/${dep}/time-off/${id}/decide`, { method: 'POST', body }),
+  decideSwap: (dep, id, body) =>
+    api.call(`/api/departments/${dep}/swaps/${id}/decide`, { method: 'POST', body }),
+
+  // ── the signed-in doctor's own view ──
+  me: () => api.call('/api/me'),
+  myShifts: () => api.call('/api/me/shifts'),
+  myTimeOff: () => api.call('/api/me/time-off'),
+  requestTimeOff: (body) => api.call('/api/me/time-off', { method: 'POST', body }),
+  withdrawTimeOff: (id) => api.call(`/api/me/time-off/${id}`, { method: 'DELETE' }),
+  myFeed: (doctorId) =>
+    api.call(`/api/me/feed${doctorId ? `?doctor_id=${doctorId}` : ''}`, { method: 'POST' }),
+  mySwaps: () => api.call('/api/me/swaps'),
+  proposeSwap: (body) => api.call('/api/me/swaps', { method: 'POST', body }),
+  withdrawSwap: (id) => api.call(`/api/me/swaps/${id}`, { method: 'DELETE' }),
+
+  // ── audit trail ──
+  history: (dep, id) =>
+    api.call(id
+      ? `/api/departments/${dep}/schedules/${id}/history`
+      : `/api/departments/${dep}/history`),
 
   // ── files (opened, not fetched, so the browser handles the download) ──
   pdfUrl: (dep, id, layout) =>

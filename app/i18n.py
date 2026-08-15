@@ -68,6 +68,34 @@ CATALOG = {
         "status.draft": "draft",
         "status.published": "published",
         "status.archived": "archived",
+        "role.member": "member",
+        "role.coordinator": "coordinator",
+        "role.owner": "owner",
+        "mail.resetSubject": "Reset your {app} password",
+        "mail.resetTitle": "Choose a new password",
+        "mail.greeting": "Hello {name},",
+        "mail.resetIntro": (
+            "Someone asked to reset the password on this account. If that was you, "
+            "use the link below — it works once and expires in {hours}."
+        ),
+        "mail.resetAction": "Choose a new password",
+        "mail.resetIgnore": (
+            "If you did not ask for this, ignore this email. "
+            "Your password has not changed."
+        ),
+        "mail.inviteSubject": "{inviter} invited you to {department}",
+        "mail.inviteTitle": "You have been invited to {department}",
+        "mail.inviteIntro": (
+            "{inviter} has invited you to join {department} on {app} as {role}. "
+            "Accepting takes a moment and needs an account with this email address."
+        ),
+        "mail.inviteAction": "Accept the invitation",
+        "mail.inviteExpiry": "This invitation expires on {date}.",
+        "mail.linkFallback": "If the link does not open, paste this into your browser:",
+        "mail.hoursOne": "1 hour",
+        "mail.hoursTwo": "2 hours",
+        "mail.hoursFew": "{n} hours",
+        "mail.hoursMany": "{n} hours",
     },
     "fr": {
         "pdf.night": "Nuit",
@@ -99,6 +127,35 @@ CATALOG = {
         "status.draft": "brouillon",
         "status.published": "publié",
         "status.archived": "archivé",
+        "role.member": "membre",
+        "role.coordinator": "coordinateur",
+        "role.owner": "responsable",
+        "mail.resetSubject": "Réinitialiser votre mot de passe {app}",
+        "mail.resetTitle": "Choisissez un nouveau mot de passe",
+        "mail.greeting": "Bonjour {name},",
+        "mail.resetIntro": (
+            "Une réinitialisation du mot de passe de ce compte a été demandée. "
+            "Si c'était vous, utilisez le lien ci-dessous : il ne fonctionne "
+            "qu'une fois et expire dans {hours}."
+        ),
+        "mail.resetAction": "Choisir un nouveau mot de passe",
+        "mail.resetIgnore": (
+            "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message. "
+            "Votre mot de passe n'a pas changé."
+        ),
+        "mail.inviteSubject": "{inviter} vous invite à rejoindre {department}",
+        "mail.inviteTitle": "Vous êtes invité à rejoindre {department}",
+        "mail.inviteIntro": (
+            "{inviter} vous invite à rejoindre {department} sur {app} en tant que {role}. "
+            "L'acceptation prend un instant et nécessite un compte avec cette adresse."
+        ),
+        "mail.inviteAction": "Accepter l'invitation",
+        "mail.inviteExpiry": "Cette invitation expire le {date}.",
+        "mail.linkFallback": "Si le lien ne s'ouvre pas, copiez ceci dans votre navigateur :",
+        "mail.hoursOne": "1 heure",
+        "mail.hoursTwo": "2 heures",
+        "mail.hoursFew": "{n} heures",
+        "mail.hoursMany": "{n} heures",
     },
     "ar": {
         "pdf.night": "الليلة",
@@ -130,6 +187,31 @@ CATALOG = {
         "status.draft": "مسودة",
         "status.published": "منشور",
         "status.archived": "مؤرشف",
+        "role.member": "عضو",
+        "role.coordinator": "منسّق",
+        "role.owner": "مالك",
+        "mail.resetSubject": "إعادة تعيين كلمة المرور في {app}",
+        "mail.resetTitle": "اختر كلمة مرور جديدة",
+        "mail.greeting": "مرحباً {name}،",
+        "mail.resetIntro": (
+            "طُلبت إعادة تعيين كلمة المرور لهذا الحساب. إن كنت أنت من طلب ذلك، "
+            "فاستخدم الرابط أدناه — يعمل مرة واحدة وتنتهي صلاحيته خلال {hours}."
+        ),
+        "mail.resetAction": "اختيار كلمة مرور جديدة",
+        "mail.resetIgnore": "إن لم تطلب ذلك، تجاهل هذه الرسالة. لم تتغيّر كلمة مرورك.",
+        "mail.inviteSubject": "دعاك {inviter} للانضمام إلى {department}",
+        "mail.inviteTitle": "لقد دُعيت للانضمام إلى {department}",
+        "mail.inviteIntro": (
+            "دعاك {inviter} للانضمام إلى {department} في {app} بصفة {role}. "
+            "القبول لا يستغرق سوى لحظة ويتطلب حساباً بهذا البريد الإلكتروني."
+        ),
+        "mail.inviteAction": "قبول الدعوة",
+        "mail.inviteExpiry": "تنتهي صلاحية هذه الدعوة في {date}.",
+        "mail.linkFallback": "إذا لم يفتح الرابط، فانسخ هذا إلى متصفحك:",
+        "mail.hoursOne": "ساعة واحدة",
+        "mail.hoursTwo": "ساعتان",
+        "mail.hoursFew": "{n} ساعات",
+        "mail.hoursMany": "{n} ساعة",
     },
 }
 
@@ -185,6 +267,22 @@ class Translator:
     def status(self, status) -> str:
         value = getattr(status, "value", status)
         return self(f"status.{value}")
+
+    def role(self, role) -> str:
+        return self(f"role.{getattr(role, 'value', role)}")
+
+    def hours(self, n: int) -> str:
+        """Arabic counts in one/two/few/many, so a bare "{n} hours" will not do."""
+        n = int(n)
+        if n == 1:
+            key = "mail.hoursOne"
+        elif n == 2:
+            key = "mail.hoursTwo"
+        elif 3 <= n % 100 <= 10:
+            key = "mail.hoursFew"
+        else:
+            key = "mail.hoursMany"
+        return self(key, n=n)
 
     @property
     def weekday_headers(self) -> list[str]:
