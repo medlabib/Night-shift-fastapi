@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import auth, departments, exports, legacy, schedules, share
+from app.routers import auth, departments, exports, legacy, me, schedules, share
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(departments.router)
 app.include_router(departments.join_router)
+app.include_router(me.router)
 app.include_router(schedules.router)
 app.include_router(exports.router)
 app.include_router(share.router)
@@ -56,3 +57,19 @@ def index() -> FileResponse:
 def shared_view(token: str) -> FileResponse:
     """Public read-only rota. The page reads the token from its own URL."""
     return FileResponse(os.path.join(STATIC_DIR, "shared.html"))
+
+
+# Links that arrive by email land here. Each serves the app, which reads the
+# token out of the URL and acts on it once it knows who is signed in.
+
+
+@app.get("/join/{token}", include_in_schema=False)
+def join_view(token: str) -> FileResponse:
+    """Accept an invitation."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/reset/{token}", include_in_schema=False)
+def reset_view(token: str) -> FileResponse:
+    """Choose a new password."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))

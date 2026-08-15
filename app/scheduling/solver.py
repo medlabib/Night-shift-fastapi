@@ -184,10 +184,23 @@ class _Model:
         for gi, group in enumerate(groups):
             if len(group) < 2:
                 continue
+
+            # Carried-forward balance shifts each doctor's starting position,
+            # so what gets evened out is the running total rather than this
+            # period in isolation. Measured per grade, like everything else.
+            carried_pts = self._carried(group, req.prior_points, req.carry_cap_points, SCALE)
+            carried_wke = self._carried(group, req.prior_weekends, req.carry_cap_weekends, 1)
+            head_pts = max(carried_pts.values(), default=0)
+            head_wke = max(carried_wke.values(), default=0)
+
             terms.append(W_POINTS_SPREAD * self._spread(
-                [sum(points[d.id]) for d in group], f"pts{gi}", self._max_points()))
+                [sum(points[d.id]) + carried_pts[d.id] for d in group],
+                f"pts{gi}", self._max_points() + head_pts))
             terms.append(W_WEEKEND_SPREAD * self._spread(
-                [sum(weekend[d.id]) for d in group], f"wke{gi}", len(self.days)))
+                [sum(weekend[d.id]) + carried_wke[d.id] for d in group],
+                f"wke{gi}", len(self.days) + head_wke))
+            # Shift count is left on this period alone: it tracks points
+            # closely, and carrying both would double-weight the same signal.
             terms.append(W_SHIFT_SPREAD * self._spread(
                 [sum(shifts[d.id]) for d in group], f"shf{gi}", len(self.days)))
 
@@ -203,6 +216,27 @@ class _Model:
 
     def _max_points(self) -> int:
         return int(round(max(self.req.points_for(d) for d in self.days) * SCALE)) * len(self.days)
+
+    def _carried(self, group: list, history: dict[str, float], cap: float, scale: int) -> dict:
+        """Each doctor's head start, as a scaled integer offset.
+
+        Rebased so the least-worked doctor in the grade starts at zero — only
+        the differences matter — then capped, so a long absence cannot hand
+        one person an entire month to catch up in.
+        """
+        if not history:
+            return {d.id: 0 for d in group}
+
+        # Someone who joined mid-window has no comparable record; the group's
+        # average keeps them neutral instead of bottom of the pile.
+        known = [float(history.get(d.id, 0.0)) for d in group if d.id not in self.req.prior_partial]
+        neutral = sum(known) / len(known) if known else 0.0
+        raw = {
+            d.id: neutral if d.id in self.req.prior_partial else float(history.get(d.id, 0.0))
+            for d in group
+        }
+        lowest = min(raw.values(), default=0.0)
+        return {k: int(round(min(v - lowest, cap) * scale)) for k, v in raw.items()}
 
     def _spread(self, expressions: list, tag: str, upper: int) -> cp_model.IntVar:
         """max(expressions) - min(expressions), as a variable to minimise."""
@@ -486,17 +520,25 @@ def summarise(req: RotaRequest, result: RotaResult) -> dict:
     per_doctor = {}
     for doc in req.doctors:
         days = result.assignments.get(doc.id, [])
+        earned = round(sum(req.points_for(d) for d in days), 2)
+        prior = round(float(req.prior_points.get(doc.id, 0.0)), 2)
         per_doctor[doc.id] = {
             "name": doc.name,
             "grade": doc.grade,
             "shifts": len(days),
-            "points": round(sum(req.points_for(d) for d in days), 2),
+            "points": earned,
             "weekend_shifts": sum(1 for d in days if d.weekday() >= 5),
             "holiday_shifts": sum(1 for d in days if d in req.holidays),
             "dates": [d.isoformat() for d in days],
+            # What they brought in, and where that leaves them — so a lighter
+            # month reads as "they did more last month", not as a mistake.
+            "prior_points": prior,
+            "cumulative_points": round(prior + earned, 2),
+            "new_this_period": doc.id in req.prior_partial,
         }
 
     points = [v["points"] for v in per_doctor.values()]
+    cumulative = [v["cumulative_points"] for v in per_doctor.values()]
     shifts = [v["shifts"] for v in per_doctor.values()]
     weekends = [v["weekend_shifts"] for v in per_doctor.values()]
     mean = sum(points) / len(points) if points else 0.0
@@ -507,6 +549,10 @@ def summarise(req: RotaRequest, result: RotaResult) -> dict:
 
     return {
         "per_doctor": per_doctor,
+        "carry_forward": req.carries_forward,
+        "cumulative_spread": (
+            round(max(cumulative) - min(cumulative), 2) if cumulative and req.carries_forward else 0
+        ),
         "points_spread": round(max(points) - min(points), 2) if points else 0,
         "shift_spread": max(shifts) - min(shifts) if shifts else 0,
         "weekend_spread": max(weekends) - min(weekends) if weekends else 0,

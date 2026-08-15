@@ -27,6 +27,30 @@ class Settings(BaseSettings):
     password_reset_ttl: int = 60 * 60          # one hour
     email_verify_ttl: int = 60 * 60 * 24 * 3   # three days
 
+    # ── outbound email ──
+    # With no host configured the mailer writes to the log instead of the
+    # network, so development and tests never need a mail server.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True   # port 587
+    smtp_ssl: bool = False       # port 465
+    smtp_timeout: float = 10.0
+    mail_from: str = ""          # defaults to smtp_user
+    mail_from_name: str = ""     # defaults to app_name
+    # Base URL used for links in email, for the times there is no request to
+    # read one from. Set it in production: "https://rota.example.org".
+    public_url: str = ""
+
+    @property
+    def mail_enabled(self) -> bool:
+        return bool(self.smtp_host)
+
+    @property
+    def mail_sender(self) -> str:
+        return self.mail_from or self.smtp_user or "night-shift@localhost"
+
     # Solver budget. The CP-SAT model is usually optimal well inside this.
     solver_time_limit: float = 10.0
     # 0 means "match the host". Hard-coding 8 workers onto a free tier's

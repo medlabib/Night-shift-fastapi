@@ -84,6 +84,27 @@ shift counts, then evenly spaced nights, then learned preferences — measured *
 grade, since comparing a consultant's load to a resident's is meaningless when each tier is
 staffed separately.
 
+### Fairness that does not reset every month
+
+Balancing one rota in isolation means whoever draws the heaviest September can draw the
+heaviest October too — each month is even, the year is not. So each doctor starts a new
+period with what they already worked carried in, and the solver evens out the **running
+total** rather than the month.
+
+Three things keep that honest:
+
+- **Only published rotas count.** A coordinator who generates six attempts at October has
+  not made anyone work six Octobers.
+- **The pull is capped** (`CARRY_CAP_POINTS`, 10 points ≈ a week of nights). Without a
+  ceiling, someone back from a long absence would absorb an entire month to catch up —
+  fairer over the quarter, unliveable in September.
+- **Nobody is punished for a period they were not there for.** A doctor who joined
+  part-way through the look-back window counts as average, not as having done nothing.
+
+`carry_forward_days` sets the window, 90 days by default; 0 scores the period alone. The
+metrics report `prior_points` and `cumulative_points` per doctor, so a lighter month reads
+as payback rather than a mistake.
+
 ### Why spacing is a rule of its own
 
 A minimum rest gap is not enough on its own. Obeying "one night off" at every step still
@@ -138,6 +159,57 @@ which re-solves everything else while paying a penalty for moving what people ha
 seen. Every edit is checked server-side against the same rules the solver enforces, and the
 verdict sits above the calendar.
 
+## Doctors, not just coordinators
+
+A **Team** tab holds the people rather than the rota. A coordinator links each roster entry
+to an account, imports a roster from CSV, hands out calendar subscriptions, and decides
+what the department has asked for.
+
+A doctor who signs in sees only their own nights — with who else is on each of them — and
+can ask for leave or ask a named colleague to take a shift. Nothing they do changes a rota
+by itself. A request stays a request until a coordinator approves it, and approval runs
+through exactly the same code a coordinator's own edit does, so it lands in the same
+history and feeds the same preference model. Approved leave is written into the roster,
+which is what the solver reads, so the next rota simply cannot schedule over it.
+
+Rotas already built are left alone on approval — re-tuning them is a deliberate act, not a
+side effect of saying yes.
+
+### Who changed what
+
+Every hand edit has been recorded since editing existed, as training signal for the
+preference model. The same rows now answer the other question: `GET .../history` returns
+them as plain sentences — "Dr Lead moved Fri 18 Sep from Bilal Haddad to Chen Wei" — per
+rota or across the department. Names resolve at read time, so a renamed doctor reads
+correctly in the history too.
+
+### Live calendar feeds
+
+A share link freezes one schedule. A feed is the opposite: one URL per doctor that answers
+with whatever is published now, so next month arrives on their phone without anyone
+re-importing anything. Drafts are left out on purpose — an unpublished rota is a proposal,
+and it should not be ringing anyone's alarm. Only the token's hash is stored; creating a
+feed again rotates the link and retires the old one.
+
+### Importing a roster
+
+`POST .../doctors/import` takes a CSV of names, with optional grade, email and active
+columns — headers in English, French or Arabic, or no header row at all. An email that
+matches a member of the department links that account to the roster entry. A bad row is
+reported and skipped rather than failing the upload: forty doctors with one typo should
+give you thirty-nine doctors and one line to fix.
+
+## Email
+
+Invitations and password resets are sent over SMTP, in the recipient's own language, and
+land on pages that exist (`/join/<token>`, `/reset/<token>`). Set `SMTP_HOST` and
+`PUBLIC_URL`; with no host configured the app logs the message instead of sending it, so
+development and the test suite never need a mail server.
+
+Sending never raises into a request. A reset whose email fails still succeeds as far as the
+caller is concerned — the token is valid either way — and it is sent after the response, so
+a slow mail server cannot be timed to reveal which addresses are registered.
+
 ## Languages
 
 English, French and Arabic, switchable from the top bar and remembered per device.
@@ -167,15 +239,20 @@ Everything under `/api` needs a session cookie, obtained from signup or login.
 
 | Area | Endpoints |
 | --- | --- |
-| Auth | `POST /api/auth/{signup,login,logout,logout-everywhere}`, `GET /api/auth/session`, `POST /api/auth/password`, `POST /api/auth/password/{reset-request,reset}` |
+| Auth | `POST /api/auth/{signup,login,logout,logout-everywhere,locale}`, `GET /api/auth/session`, `POST /api/auth/password`, `POST /api/auth/password/{reset-request,reset}` |
 | Departments | `GET POST /api/departments`, `PATCH /api/departments/{id}`, members, `POST .../invites`, `POST /api/invites/{token}/accept` |
-| Roster | `GET POST /api/departments/{id}/doctors`, `PATCH DELETE .../doctors/{id}`, `PUT .../doctors/{id}/leave` |
+| Roster | `GET POST /api/departments/{id}/doctors`, `PATCH DELETE .../doctors/{id}`, `PUT .../doctors/{id}/leave`, `POST .../doctors/import` |
+| Accounts | `POST DELETE .../doctors/{id}/link` |
 | Schedules | `POST GET /api/departments/{id}/schedules`, `GET DELETE .../{sid}`, `POST .../publish` |
 | Editing | `POST .../{sid}/{assign,unassign,swap,lock,retune}`, `GET .../{sid}/validate` |
+| Requests | `GET /api/departments/{id}/requests`, `POST .../time-off/{rid}/decide`, `POST .../swaps/{rid}/decide` |
+| My rota | `GET /api/me`, `.../shifts`, `GET POST DELETE /api/me/time-off`, `/api/me/swaps` |
+| History | `GET /api/departments/{id}/history`, `GET .../schedules/{sid}/history` |
 | Preferences | `GET DELETE /api/departments/{id}/preferences`, `POST .../preferences/train` |
 | Export | `GET .../{sid}/pdf?layout=vertical\|horizontal\|calendar`, `GET .../{sid}/csv` |
 | Sharing | `POST GET /api/departments/{id}/schedules/{sid}/shares`, `DELETE .../shares/{id}` |
-| Public | `GET /api/shared/{token}`, `.../ics`, `.../pdf`, and the page at `/s/{token}` |
+| Feeds | `POST DELETE .../doctors/{id}/feed`, `GET /api/departments/{id}/feeds` |
+| Public | `GET /api/shared/{token}`, `.../ics`, `.../pdf`, `GET /api/feeds/{token}.ics`, and the pages at `/s/{token}`, `/join/{token}`, `/reset/{token}` |
 | Legacy | `POST /schedule` — the original API, now answered by the solver |
 
 Interactive docs at `/docs`.
@@ -220,10 +297,20 @@ DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/nightshift_test" \
 SECRET_KEY=test pytest -q
 ```
 
-31 tests covering auth flows, authorisation boundaries, solver constraints against
-known-feasible and known-impossible cases, editing and validation, preference learning,
-every PDF layout, share-link access and revocation, shift-spacing limits, and legacy API
-compatibility.
+56 tests covering auth flows, authorisation boundaries, solver constraints against
+known-feasible and known-impossible cases, carried-forward fairness, editing and
+validation, doctor self-service and coordinator decisions, the audit trail, preference
+learning, every PDF layout, share links and calendar feeds, CSV import, outbound email,
+shift-spacing limits, and legacy API compatibility.
+
+They run on GitHub Actions against a Postgres service container, which also checks that
+the migrations match the models — a model change without a migration fails there rather
+than on a deploy.
+
+The suite pins `SOLVER_WORKERS=1`. A rota request usually has *many* equally-optimal
+answers; with several workers racing, CP-SAT reaches the same score but returns a different
+rota each run, and a test that reads the rota itself flakes. One worker makes a solve
+reproducible.
 
 ## Layout
 
@@ -234,16 +321,20 @@ app/
   models.py          database schema
   security.py        hashing, sessions, tokens
   deps.py            current user and department authorisation
+  mail.py            outbound email, SMTP or the log
+  audit.py           edit history, read back as sentences
+  i18n.py            server-side translations for PDFs and email
   scheduling/
     domain.py        solver-facing types, free of the database
     solver.py        the CP-SAT model
     service.py       database ↔ solver bridge
     preferences.py   learning weights from edit history
-  routers/           auth, departments, schedules, exports, share, legacy
+  routers/           auth, departments, me, schedules, exports, share, legacy
   templates/pdf/     the three print layouts
 static/              the Rota Studio frontend
 migrations/          Alembic
 tests/               end-to-end suite
+.github/workflows/   CI
 ```
 
 `main.py` at the root re-exports the app so `uvicorn main:app` keeps working.

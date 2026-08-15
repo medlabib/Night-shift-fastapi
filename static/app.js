@@ -126,7 +126,7 @@ const fmt = (n, dp = 1) => {
     plural categories — Arabic has six, English two. */
 const UNIT_KEYS = {
   night: 'unit.night', doctor: 'unit.doctor', shift: 'unit.shift', rota: 'unit.rota',
-  holiday: 'rules.holidays', view: 'share.views',
+  holiday: 'rules.holidays', view: 'share.views', request: 'unit.request',
 };
 const plural = (n, one, many) => {
   const key = UNIT_KEYS[one];
@@ -171,6 +171,9 @@ const state = {
   scheduleId: null,            // the saved schedule currently open
   validation: null,
   authMode: 'login',
+  // An invitation opened before signing in: held until there is an account
+  // to accept it as.
+  pendingInvite: null,
 };
 
 const signedIn = () => state.session !== null;
@@ -1076,6 +1079,7 @@ function renderResult() {
   renderInsightsPane();
   renderExportPane();
   renderHistoryPane();
+  renderTeamPane();
 
   const issues = state.result.analysis.findings.filter((f) => f.severity === 'bad' || f.severity === 'warn').length;
   const badge = $('#insightBadge');
@@ -1252,6 +1256,33 @@ function bar(label, value, max, extra = {}) {
       extra.note ? el('span', { class: 'bar-note' }, extra.note) : null));
 }
 
+/**
+ * What each doctor brought in from earlier months.
+ *
+ * Without this the pane says someone is lightly loaded and looks wrong. With
+ * it, a light month reads as what it is: payback for a heavy one.
+ */
+function carriedForwardNote() {
+  const metrics = state.result?.response?.metrics;
+  if (!metrics?.carry_forward) return null;
+
+  const people = Object.values(metrics.per_doctor || {})
+    .filter((d) => d.prior_points || d.new_this_period)
+    .sort((x, y) => y.prior_points - x.prior_points);
+  if (!people.length) return null;
+
+  const days = state.result?.payload?.carry_forward_days || 90;
+  return el('div', { class: 'panel', style: 'grid-column:1/-1' },
+    el('h3', {}, icon('i-history'), t('fair.carried')),
+    el('div', { class: 'panel-sub' }, t('fair.carryNote', { days })),
+    el('div', { class: 'carry-rows' }, ...people.map((d) => el('div', { class: 'carry-row' },
+      el('span', {}, d.name),
+      el('b', {}, `${fmt(d.prior_points)} ${t('fair.points.word')}`),
+      el('em', {}, d.new_this_period
+        ? t('fair.newJoiner')
+        : `${t('fair.cumulative')} ${fmt(d.cumulative_points)}`)))));
+}
+
 function renderFairnessPane() {
   const pane = $('#pane-fairness');
   const a = state.result.analysis;
@@ -1367,7 +1398,8 @@ function renderFairnessPane() {
 
   pane.replaceChildren(
     resultHeader(),
-    el('div', { class: 'grid-2' }, overview, pointsPanel, weekendPanel, stripPanel, table));
+    el('div', { class: 'grid-2' },
+      overview, pointsPanel, weekendPanel, carriedForwardNote(), stripPanel, table));
 }
 
 function renderInsightsPane() {
@@ -1584,16 +1616,20 @@ function showTab(tab) {
   $$('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === tab));
   const hasResult = !!state.result;
   $$('.pane').forEach((p) => { p.hidden = !hasResult || p.id !== `pane-${tab}`; });
-  if (!hasResult) {
-    // History survives a page reload even without a current result.
-    if (tab === 'history' && state.runs.length) {
-      $('#emptyState').hidden = true;
-      $('#pane-history').hidden = false;
-      renderHistoryPane();
-    } else {
-      $('#emptyState').hidden = false;
-    }
-  }
+  if (hasResult) return;
+
+  // Two panes stand on their own: the team is about people rather than any
+  // one rota, and history survives a page reload — from this device's run
+  // log signed out, and from the department's saved rotas signed in.
+  const hasHistory = state.runs.length || (signedIn() && state.serverSchedules.length);
+  const standalone =
+    (tab === 'team' && signedIn()) || (tab === 'history' && hasHistory);
+  $('#emptyState').hidden = standalone;
+  if (!standalone) return;
+
+  $(`#pane-${tab}`).hidden = false;
+  if (tab === 'team') renderTeamPane();
+  else renderHistoryPane();
 }
 
 function toast(kind, title, body = '') {
@@ -1885,6 +1921,9 @@ function adoptSchedule(schedule, elapsed = 0) {
       Object.values(per).map((v) => [v.name, v.weekend_shifts])),
     schedule_name: schedule.name,
     score: schedule.metrics?.points_spread ?? 0,
+    // Kept whole so panes can read what the analysis does not model —
+    // carried-forward balance, for one.
+    metrics: schedule.metrics || {},
   };
 
   state.scheduleId = schedule.id;
@@ -1893,7 +1932,7 @@ function adoptSchedule(schedule, elapsed = 0) {
   state.holidays = new Set(schedule.config?.holidays || []);
   state.perNight = schedule.config?.coverage ?? state.perNight;
 
-  const payload = { ...generatePayload(), find: 0 };
+  const payload = { ...generatePayload(), ...(schedule.config || {}), find: 0 };
   state.result = {
     payload,
     response,
@@ -2075,7 +2114,16 @@ async function submitAuth(event) {
       toast('ok', t('auth.signedIn', { name: state.session.name }), state.department?.name || '');
     }
     await loadServerSchedules();
+    // Now there is an account, an invitation opened from an email can be
+    // accepted. It takes over from the department signup just created.
+    if (state.pendingInvite) {
+      const token = state.pendingInvite;
+      state.pendingInvite = null;
+      await acceptInvitation(token);
+    }
+    await loadTeam();
     renderPreflight();
+    if (state.locale !== 'en') api.setLocale(state.locale).catch(() => {});
   } catch (err) {
     error.textContent = err.message;
     error.hidden = false;
@@ -2092,8 +2140,10 @@ async function signOut() {
   state.serverSchedules = [];
   state.scheduleId = null;
   state.validation = null;
+  await loadTeam();
   renderAccount();
   renderHistoryPane();
+  renderTeamPane();
   toast('info', t('auth.signedOut'), t('auth.signedOutSub'));
 }
 
@@ -2105,10 +2155,84 @@ async function bootSession() {
     if (state.department) {
       await loadRoster();
       await loadServerSchedules();
+      await loadTeam();
     }
   } catch {
     applySession(null); // not signed in: stay in local mode
   }
+  await handleEmailLink();
+}
+
+/* ─────────────────── links that arrive by email ─────────────────── */
+
+/**
+ * `/join/<token>` and `/reset/<token>` are the URLs in outgoing mail. Both
+ * serve this same page; what to do with the token is decided here, once the
+ * session is known.
+ */
+async function handleEmailLink() {
+  const join = window.location.pathname.match(/^\/join\/(.+)$/);
+  const reset = window.location.pathname.match(/^\/reset\/(.+)$/);
+  if (join) return acceptInvitation(join[1]);
+  if (reset) return openResetDialog(reset[1]);
+}
+
+function clearLinkFromUrl() {
+  window.history.replaceState({}, '', '/');
+}
+
+async function acceptInvitation(token) {
+  if (!signedIn()) {
+    // Nothing to accept an invitation *as* yet. Keep the token and pick it
+    // up again once they have signed in.
+    state.pendingInvite = token;
+    toast('info', t('join.signIn'));
+    openAuth('signup');
+    return;
+  }
+  try {
+    const department = await api.acceptInvite(token);
+    toast('ok', t('join.accepted', { department: department.name }));
+    state.pendingInvite = null;
+    clearLinkFromUrl();
+    await bootSession();
+    renderAccount();
+    showTab('team');
+  } catch (err) {
+    toast('err', t('join.failed'), err.message);
+    clearLinkFromUrl();
+  }
+}
+
+function openResetDialog(token) {
+  const field = el('input', {
+    type: 'password', class: 'inp', autocomplete: 'new-password',
+    placeholder: t('reset.password'), minlength: '10',
+  });
+  const dialog = el('dialog', { class: 'modal' },
+    el('form', {
+      method: 'dialog', class: 'modal-inner',
+      onsubmit: async (event) => {
+        event.preventDefault();
+        try {
+          await api.resetPassword(token, field.value);
+          toast('ok', t('reset.done'));
+          dialog.close();
+          clearLinkFromUrl();
+          openAuth('login');
+        } catch (err) {
+          toast('err', t('reset.failed'), err.message);
+        }
+      },
+    },
+      el('h2', {}, t('reset.title')),
+      el('label', { class: 'field' }, el('span', {}, t('reset.password')), field),
+      el('div', { class: 'modal-actions' },
+        el('button', { class: 'btn btn-primary', type: 'submit' }, t('reset.submit')))));
+
+  document.body.append(dialog);
+  dialog.showModal();
+  field.focus();
 }
 
 function wireAuth() {
@@ -2124,6 +2248,7 @@ function wireAuth() {
     state.result = null;
     await loadRoster();
     await loadServerSchedules();
+    await loadTeam();
     showTab(state.activeTab);
   });
 }
@@ -2213,6 +2338,41 @@ function renderSavedSchedules(pane) {
   }
 
   pane.replaceChildren(header, el('div', { class: 'runs' }, ...rows.map(savedScheduleRow)));
+  renderAuditTrail(pane);
+}
+
+/**
+ * Who changed what.
+ *
+ * The events have been recorded since editing existed — they train the
+ * preference model — but nothing ever showed them. Appended rather than
+ * inlined so the list can arrive after the schedules are already on screen.
+ */
+async function renderAuditTrail(pane) {
+  if (!signedIn() || !state.department) return;
+  const entries = await api
+    .history(state.department.id, state.scheduleId)
+    .catch(() => []);
+
+  const block = el('section', { class: 'team-block' },
+    sectionHead(t('audit.title'), t('audit.sub')),
+    entries.length
+      ? el('div', { class: 'runs' }, ...entries.slice(0, 40).map((entry) => {
+        const when = new Date(entry.created_at);
+        return el('div', { class: 'run-row' },
+          el('div', { class: 'run-when' },
+            when.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+            el('div', {}, when.toLocaleTimeString(undefined, {
+              hour: '2-digit', minute: '2-digit',
+            }))),
+          el('div', { class: 'run-main' },
+            el('b', {}, entry.summary),
+            el('span', {}, entry.schedule_name || '')));
+      }))
+      : el('div', { class: 'empty-note' }, t('audit.none')));
+
+  // The pane may have been re-rendered while this was in flight.
+  if (pane.isConnected) pane.append(block);
 }
 
 
@@ -2286,6 +2446,9 @@ function applyLocale(code) {
   if (state.result) renderResult();
   else showTab(state.activeTab);
   saveState();
+  // The interface remembers its language per device; email has no device to
+  // ask, so the server is told too.
+  if (signedIn()) api.setLocale(state.locale).catch(() => {});
 }
 
 function wireLanguage() {
@@ -2296,3 +2459,370 @@ function wireLanguage() {
 }
 
 wireLanguage();
+
+/* ─────────────────────────── team ───────────────────────────
+ *
+ * The rest of the studio is about a rota. This pane is about the people in
+ * it: who has an account, who is waiting on a decision, and — when the
+ * person signed in is themselves on the roster — their own nights.
+ */
+
+const team = { inbox: null, doctors: [], members: [], me: null, feedUrl: null };
+
+async function loadTeam() {
+  if (!signedIn() || !state.department) {
+    team.inbox = null;
+    team.doctors = [];
+    team.members = [];
+    team.me = null;
+    return;
+  }
+  const coordinator = ['coordinator', 'owner'].includes(state.department.role);
+  const [doctors, members, inbox, me] = await Promise.all([
+    api.doctors(state.department.id).catch(() => []),
+    api.members(state.department.id).catch(() => []),
+    coordinator ? api.inbox(state.department.id).catch(() => null) : Promise.resolve(null),
+    api.me().catch(() => null),
+  ]);
+  team.doctors = doctors;
+  team.members = members;
+  team.inbox = inbox;
+  team.me = me;
+  renderInboxBadge();
+}
+
+function pendingCount() {
+  if (!team.inbox) return 0;
+  return (team.inbox.time_off?.length || 0) + (team.inbox.swaps?.length || 0);
+}
+
+function renderInboxBadge() {
+  const badge = $('#inboxBadge');
+  if (!badge) return;
+  const count = pendingCount();
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+function sectionHead(title, sub) {
+  return el('div', { class: 'result-head' },
+    el('div', { class: 'result-title' },
+      el('h2', {}, title),
+      sub ? el('span', { class: 'sub' }, sub) : null));
+}
+
+/** Approve or decline, then refresh — a decision changes the roster. */
+async function decide(kind, id, approve) {
+  try {
+    if (kind === 'leave') {
+      await api.decideTimeOff(state.department.id, id, { approve });
+      toast(approve ? 'ok' : 'info',
+        approve ? t('inbox.approved') : t('inbox.declined'),
+        approve ? t('inbox.approvedLeave') : '');
+    } else {
+      await api.decideSwap(state.department.id, id, { approve });
+      toast(approve ? 'ok' : 'info',
+        approve ? t('inbox.approved') : t('inbox.declined'),
+        approve ? t('inbox.approvedSwap') : '');
+    }
+    await loadTeam();
+    if (approve) {
+      await loadRoster();
+      if (state.scheduleId) await refreshSchedule();
+    }
+    renderTeamPane();
+  } catch (err) {
+    toast('err', t('toast.actionFailed'), err.message);
+  }
+}
+
+function inboxSection() {
+  if (!team.inbox) return null;
+  const items = [];
+
+  for (const row of team.inbox.time_off || []) {
+    items.push(el('div', { class: 'run-row' },
+      el('div', { class: 'run-when' }, t('inbox.leave'),
+        el('div', {}, prettyDate(row.start_date))),
+      el('div', { class: 'run-main' },
+        el('b', {}, t('inbox.asks', {
+          doctor: row.doctor_name, nights: plural(row.nights, 'night'),
+        })),
+        el('span', {}, [
+          `${prettyDate(row.start_date)} → ${prettyDate(row.end_date)}`,
+          row.reason,
+        ].filter(Boolean).join(' · '))),
+      el('div', { class: 'run-actions' },
+        el('button', {
+          class: 'btn btn-primary',
+          onclick: () => decide('leave', row.id, true),
+        }, t('inbox.approve')),
+        el('button', {
+          class: 'btn btn-ghost',
+          onclick: () => decide('leave', row.id, false),
+        }, t('inbox.decline')))));
+  }
+
+  for (const row of team.inbox.swaps || []) {
+    items.push(el('div', { class: 'run-row' },
+      el('div', { class: 'run-when' }, t('inbox.swap'),
+        el('div', {}, prettyDate(row.date))),
+      el('div', { class: 'run-main' },
+        el('b', {}, t('inbox.swapAsks', {
+          from: row.from_doctor_name, to: row.to_doctor_name, date: prettyDate(row.date),
+        })),
+        el('span', {}, [row.schedule_name, row.message].filter(Boolean).join(' · '))),
+      el('div', { class: 'run-actions' },
+        el('button', {
+          class: 'btn btn-primary',
+          onclick: () => decide('swap', row.id, true),
+        }, t('inbox.approve')),
+        el('button', {
+          class: 'btn btn-ghost',
+          onclick: () => decide('swap', row.id, false),
+        }, t('inbox.decline')))));
+  }
+
+  return el('section', { class: 'team-block' },
+    sectionHead(t('inbox.title'), pendingCount() ? plural(pendingCount(), 'request') : ''),
+    items.length
+      ? el('div', { class: 'runs' }, ...items)
+      : el('div', { class: 'empty-note' }, t('inbox.none')));
+}
+
+async function importRoster(file) {
+  try {
+    const result = await api.importRoster(state.department.id, file);
+    toast('ok', t('roster.imported', { created: result.created, updated: result.updated }),
+      result.failed ? t('roster.importFailed', { count: result.failed }) : '');
+    await loadRoster();
+    await loadTeam();
+    renderTeamPane();
+    renderRoster();
+  } catch (err) {
+    toast('err', t('toast.actionFailed'), err.message);
+  }
+}
+
+async function toggleFeed(doctor) {
+  try {
+    if (doctor.has_feed) {
+      await api.revokeFeed(state.department.id, doctor.id);
+      team.feedUrl = null;
+      toast('info', t('feed.revoked'));
+    } else {
+      const feed = await api.createFeed(state.department.id, doctor.id);
+      team.feedUrl = { id: doctor.id, url: feed.url };
+      toast('ok', t('feed.created'), t('feed.draftNote'));
+    }
+    await loadTeam();
+    renderTeamPane();
+  } catch (err) {
+    toast('err', t('toast.actionFailed'), err.message);
+  }
+}
+
+function doctorRow(doctor) {
+  const linkedName = doctor.user_name;
+  const unclaimed = team.members.filter(
+    (m) => !team.doctors.some((d) => d.user_id === m.id && d.id !== doctor.id));
+
+  const picker = el('select', {},
+    el('option', { value: '' }, t('roster.pickMember')),
+    ...unclaimed.map((m) => el('option', {
+      value: m.id, selected: m.id === doctor.user_id,
+    }, `${m.name} · ${m.email}`)));
+  picker.addEventListener('change', async (e) => {
+    try {
+      if (e.target.value) await api.linkDoctor(state.department.id, doctor.id, e.target.value);
+      else await api.unlinkDoctor(state.department.id, doctor.id);
+      await loadTeam();
+      renderTeamPane();
+    } catch (err) {
+      toast('err', t('toast.actionFailed'), err.message);
+    }
+  });
+
+  const showing = team.feedUrl?.id === doctor.id ? team.feedUrl.url : null;
+
+  return el('div', { class: 'run-row' },
+    el('div', { class: 'avatar', style: avatarStyle() }, initials(doctor.name)),
+    el('div', { class: 'run-main' },
+      el('b', {}, doctor.name),
+      el('span', {}, [
+        doctor.grade,
+        linkedName ? t('roster.linked', { name: linkedName }) : t('roster.unlinked'),
+        doctor.has_feed ? t('feed.live') : null,
+      ].filter(Boolean).join(' · ')),
+      showing
+        ? el('div', { class: 'share-new' },
+          el('input', {
+            type: 'text', readonly: true, value: showing,
+            onclick: (e) => e.target.select(),
+          }),
+          el('button', {
+            class: 'btn btn-ghost',
+            onclick: () => navigator.clipboard.writeText(showing)
+              .then(() => toast('ok', t('toast.copied'))).catch(() => {}),
+          }, icon('i-copy'), t('share.copy')))
+        : null),
+    el('div', { class: 'run-actions' },
+      picker,
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => toggleFeed(doctor),
+      }, doctor.has_feed ? t('feed.revoke') : t('feed.create'))));
+}
+
+function rosterSection() {
+  const coordinator = ['coordinator', 'owner'].includes(state.department?.role);
+  if (!coordinator) return null;
+
+  const picker = el('input', {
+    type: 'file', accept: '.csv,text/csv', style: 'display:none',
+  });
+  picker.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) importRoster(file);
+    e.target.value = '';
+  });
+
+  return el('section', { class: 'team-block' },
+    el('div', { class: 'result-head' },
+      el('div', { class: 'result-title' },
+        el('h2', {}, t('team.roster')),
+        el('span', { class: 'sub' }, t('team.rosterSub'))),
+      el('div', { class: 'result-actions' },
+        picker,
+        el('button', {
+          class: 'btn btn-ghost', onclick: () => picker.click(), title: t('roster.importHint'),
+        }, icon('i-plus'), t('roster.import')))),
+    team.doctors.length
+      ? el('div', { class: 'runs' }, ...team.doctors.map(doctorRow))
+      : el('div', { class: 'empty-note' }, t('roster.empty')));
+}
+
+/* ── the signed-in doctor's own view ── */
+
+async function askLeave(doctorId, from, to, reason) {
+  try {
+    await api.requestTimeOff({
+      doctor_id: doctorId, start_date: from, end_date: to, reason: reason || null,
+    });
+    toast('ok', t('mine.requested'));
+    await loadTeam();
+    renderTeamPane();
+  } catch (err) {
+    toast('err', t('toast.actionFailed'), err.message);
+  }
+}
+
+function leaveForm(doctorId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = el('input', { type: 'date', min: today });
+  const to = el('input', { type: 'date', min: today });
+  const reason = el('input', { type: 'text', placeholder: t('mine.reason') });
+
+  return el('div', { class: 'leave-form' },
+    el('label', { class: 'field' }, el('span', {}, t('mine.leaveFrom')), from),
+    el('label', { class: 'field' }, el('span', {}, t('mine.leaveTo')), to),
+    el('label', { class: 'field grow' }, el('span', {}, t('mine.reason')), reason),
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: () => {
+        if (!from.value || !to.value) return;
+        askLeave(doctorId, from.value, to.value || from.value, reason.value.trim());
+      },
+    }, t('mine.send')));
+}
+
+async function askSwap(shift) {
+  const others = team.doctors.filter(
+    (d) => d.id !== shift.doctor_id && !shift.alongside.includes(d.name));
+  if (!others.length) return;
+  const choice = window.prompt(
+    `${t('mine.askSwap')}\n${others.map((d, i) => `${i + 1}. ${d.name}`).join('\n')}`, '1');
+  const picked = others[Number(choice) - 1];
+  if (!picked) return;
+  try {
+    await api.proposeSwap({
+      schedule_id: shift.schedule_id, date: shift.date,
+      from_doctor_id: shift.doctor_id, to_doctor_id: picked.id,
+    });
+    toast('ok', t('mine.requested'), picked.name);
+    await loadTeam();
+    renderTeamPane();
+  } catch (err) {
+    toast('err', t('toast.actionFailed'), err.message);
+  }
+}
+
+function mineSection() {
+  const me = team.me;
+  if (!me || !me.doctors.length) return null;
+  const shifts = me.shifts || [];
+
+  const rows = shifts.slice(0, 30).map((shift) => el('div', { class: 'run-row' },
+    el('div', { class: 'run-when' }, prettyDate(shift.date),
+      el('div', {}, shift.status)),
+    el('div', { class: 'run-main' },
+      el('b', {}, shift.schedule_name),
+      el('span', {}, shift.alongside.length
+        ? t('mine.alongside', { names: shift.alongside.join(', ') })
+        : shift.department_name)),
+    el('div', { class: 'run-actions' },
+      el('button', {
+        class: 'btn btn-ghost', onclick: () => askSwap(shift),
+      }, t('mine.askSwap')))));
+
+  const mine = me.doctors[0];
+  const feedButton = el('button', { class: 'btn btn-ghost' }, icon('i-calendar'), t('feed.create'));
+  feedButton.addEventListener('click', async () => {
+    try {
+      const feed = await api.myFeed(mine.id);
+      team.feedUrl = { id: mine.id, url: feed.url };
+      toast('ok', t('feed.created'), t('feed.draftNote'));
+      renderTeamPane();
+    } catch (err) {
+      toast('err', t('toast.actionFailed'), err.message);
+    }
+  });
+
+  const showing = team.feedUrl?.id === mine.id ? team.feedUrl.url : null;
+
+  return el('section', { class: 'team-block' },
+    el('div', { class: 'result-head' },
+      el('div', { class: 'result-title' },
+        el('h2', {}, t('mine.title')),
+        el('span', { class: 'sub' }, shifts.length ? plural(shifts.length, 'night') : '')),
+      el('div', { class: 'result-actions' }, feedButton)),
+    showing
+      ? el('div', { class: 'share-new' },
+        el('input', {
+          type: 'text', readonly: true, value: showing, onclick: (e) => e.target.select(),
+        }),
+        el('button', {
+          class: 'btn btn-ghost',
+          onclick: () => navigator.clipboard.writeText(showing)
+            .then(() => toast('ok', t('toast.copied'))).catch(() => {}),
+        }, icon('i-copy'), t('share.copy')))
+      : null,
+    rows.length
+      ? el('div', { class: 'runs' }, ...rows)
+      : el('div', { class: 'empty-note' }, t('mine.none')),
+    el('h3', { style: 'margin:18px 0 8px' }, t('mine.askLeave')),
+    leaveForm(mine.id));
+}
+
+function renderTeamPane() {
+  const pane = $('#pane-team');
+  if (!pane) return;
+  if (!signedIn() || !state.department) {
+    pane.replaceChildren(
+      sectionHead(t('team.title'), t('team.sub')),
+      el('div', { class: 'empty-note' }, t('team.signedOut')));
+    return;
+  }
+  pane.replaceChildren(
+    ...[inboxSection(), mineSection(), rosterSection()].filter(Boolean));
+}

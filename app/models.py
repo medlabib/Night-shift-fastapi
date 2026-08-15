@@ -57,6 +57,15 @@ class AssignmentSource(str, enum.Enum):
     manual = "manual"
 
 
+class RequestStatus(str, enum.Enum):
+    """Where a doctor-raised request has got to."""
+
+    pending = "pending"
+    approved = "approved"
+    declined = "declined"
+    withdrawn = "withdrawn"
+
+
 class TimestampMixin:
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -81,6 +90,9 @@ class User(Base, TimestampMixin):
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     # Bumped on password change and logout-everywhere; stale sessions then fail.
     session_epoch: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Which language to write to them in. The interface remembers its own
+    # choice per device; email has no device to ask, so it asks this.
+    locale: Mapped[str] = mapped_column(String(8), default="en", nullable=False)
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -143,6 +155,9 @@ class Invitation(Base, TimestampMixin):
     invited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     accepted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    # Invite someone *as* a roster entry: accepting claims that doctor, so
+    # they land on their own shifts rather than an empty department.
+    doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id", ondelete="SET NULL"))
 
 
 # ───────────────────────────── roster ─────────────────────────────
@@ -180,6 +195,97 @@ class Leave(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(String(200))
 
     doctor: Mapped[Doctor] = relationship(back_populates="leave")
+
+
+# ─────────────────────── doctor-raised requests ───────────────────────
+# Leave and swaps come *from* the doctor and are decided by a coordinator.
+# Nothing here changes a rota on its own: approval is what writes to the
+# roster or the schedule, through the same paths a coordinator edit uses.
+
+
+class TimeOffRequest(Base, TimestampMixin):
+    __tablename__ = "time_off_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    doctor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctors.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    start_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[RequestStatus] = mapped_column(
+        Enum(RequestStatus, name="request_status"), default=RequestStatus.pending, nullable=False
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(String(400))
+
+    doctor: Mapped[Doctor] = relationship()
+
+    @property
+    def dates(self) -> list[dt.date]:
+        span = (self.end_date - self.start_date).days
+        return [self.start_date + dt.timedelta(days=i) for i in range(span + 1)]
+
+
+class SwapRequest(Base, TimestampMixin):
+    """One doctor asking a colleague to take a specific night."""
+
+    __tablename__ = "swap_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    schedule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schedules.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    from_doctor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctors.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    to_doctor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctors.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    message: Mapped[str | None] = mapped_column(String(400))
+    status: Mapped[RequestStatus] = mapped_column(
+        Enum(RequestStatus, name="request_status"), default=RequestStatus.pending, nullable=False
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(String(400))
+
+
+class CalendarFeed(Base, TimestampMixin):
+    """A doctor's standing ICS subscription, spanning every published rota.
+
+    A share link is a snapshot of one schedule; this is the opposite — one URL
+    whose contents change as new rotas are published, so a phone calendar stays
+    current without anyone re-importing anything.
+    """
+
+    __tablename__ = "calendar_feeds"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    doctor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctors.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_read_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    reads: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+    doctor: Mapped[Doctor] = relationship()
+
+    def is_live(self) -> bool:
+        return self.revoked_at is None
 
 
 # ───────────────────────────── schedules ─────────────────────────────

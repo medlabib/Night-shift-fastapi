@@ -13,11 +13,20 @@ from app.models import (
     Assignment,
     AssignmentSource,
     Doctor as DoctorRow,
+    EditEvent,
     Leave,
     PreferenceWeight,
     Schedule,
+    ScheduleStatus,
 )
-from app.scheduling.domain import DEFAULT_WEIGHTS, Doctor, RotaRequest, RotaResult, weight_for
+from app.scheduling.domain import (
+    CARRY_WINDOW_DAYS,
+    DEFAULT_WEIGHTS,
+    Doctor,
+    RotaRequest,
+    RotaResult,
+    weight_for,
+)
 from app.scheduling.solver import solve, summarise
 from app.schemas import AssignmentOut, ScheduleOut, ShortfallOut, ValidationOut
 
@@ -52,6 +61,65 @@ def load_preferences(db: Session, department_id: uuid.UUID) -> dict[tuple[str | 
     }
 
 
+def load_history(
+    db: Session,
+    department_id: uuid.UUID,
+    roster: list[DoctorRow],
+    before: dt.date,
+    window_days: int,
+    *,
+    exclude: uuid.UUID | None = None,
+) -> tuple[dict[str, float], dict[str, float], set[str]]:
+    """What each doctor already worked in the run-up to a new period.
+
+    Only **published** rotas count. Drafts are proposals, and a coordinator who
+    generates six attempts at October should not have all six charged against
+    anyone. Only nights *before* the new period count, so an overlapping rota
+    contributes its earlier half and nothing more.
+
+    Returns carried points, carried weekend nights, and the ids of doctors who
+    joined part-way through the window — they have no comparable record, and
+    the solver treats them as average rather than as owing a heavy month.
+    """
+    points: dict[str, float] = {str(d.id): 0.0 for d in roster}
+    weekends: dict[str, float] = {str(d.id): 0.0 for d in roster}
+    if window_days <= 0 or not roster:
+        return {}, {}, set()
+
+    since = before - dt.timedelta(days=window_days)
+    stmt = (
+        select(Assignment)
+        .join(Schedule, Schedule.id == Assignment.schedule_id)
+        .where(
+            Schedule.department_id == department_id,
+            Schedule.status == ScheduleStatus.published,
+            Assignment.doctor_id.in_([d.id for d in roster]),
+            Assignment.date >= since,
+            Assignment.date < before,
+        )
+    )
+    if exclude is not None:
+        stmt = stmt.where(Schedule.id != exclude)
+
+    rows = db.scalars(stmt).all()
+    if not rows:
+        return {}, {}, set()
+
+    for row in rows:
+        key = str(row.doctor_id)
+        points[key] = points.get(key, 0.0) + float(row.points)
+        if row.date.weekday() >= 5:
+            weekends[key] = weekends.get(key, 0.0) + 1
+
+    cutoff = dt.datetime.combine(since, dt.time.min, tzinfo=dt.timezone.utc)
+    partial = {
+        str(d.id)
+        for d in roster
+        if d.created_at and d.created_at > cutoff and not points.get(str(d.id))
+    }
+    return points, weekends, partial
+
+
 def build_request(
     db: Session,
     department_id: uuid.UUID,
@@ -62,6 +130,7 @@ def build_request(
     change_penalty: int = 0,
     use_preferences: bool = True,
     time_limit: float | None = None,
+    schedule_id: uuid.UUID | None = None,
 ) -> RotaRequest:
     """Turn a stored schedule config into a solver request."""
     doctor_ids = [uuid.UUID(x) for x in config.get("doctor_ids", [])] or None
@@ -73,9 +142,16 @@ def build_request(
         for k, v in (config.get("coverage_by_date") or {}).items()
     }
 
+    start = dt.date.fromisoformat(config["start_date"])
+    prior_points, prior_weekends, partial = load_history(
+        db, department_id, list(roster), start,
+        int(config.get("carry_forward_days", CARRY_WINDOW_DAYS)),
+        exclude=schedule_id,
+    )
+
     return RotaRequest(
         doctors=[Doctor(id=str(d.id), name=d.name, grade=d.grade) for d in roster],
-        start=dt.date.fromisoformat(config["start_date"]),
+        start=start,
         end=dt.date.fromisoformat(config["end_date"]),
         coverage=coverage,
         default_coverage=int(config.get("coverage", 2)),
@@ -91,6 +167,9 @@ def build_request(
         anchor=anchor,
         change_penalty=change_penalty,
         preferences=load_preferences(db, department_id) if use_preferences else {},
+        prior_points=prior_points,
+        prior_weekends=prior_weekends,
+        prior_partial=partial,
         time_limit=time_limit or settings.solver_time_limit,
         workers=settings.workers,
     )
@@ -196,7 +275,10 @@ def locked_assignments(schedule: Schedule) -> dict[str, set[dt.date]]:
 
 def recompute_metrics(db: Session, schedule: Schedule) -> None:
     """Refresh fairness metrics after a manual edit, keeping any shortfall notes."""
-    req = build_request(db, schedule.department_id, schedule.config, use_preferences=False)
+    req = build_request(
+        db, schedule.department_id, schedule.config,
+        use_preferences=False, schedule_id=schedule.id,
+    )
     result = RotaResult(
         assignments={k: sorted(v) for k, v in current_assignments(schedule).items()},
         status=schedule.solver_status or "MANUAL",
@@ -212,7 +294,10 @@ def recompute_metrics(db: Session, schedule: Schedule) -> None:
 
 def validate(db: Session, schedule: Schedule) -> ValidationOut:
     """Check a hand-edited rota against the same rules the solver enforces."""
-    req = build_request(db, schedule.department_id, schedule.config, use_preferences=False)
+    req = build_request(
+        db, schedule.department_id, schedule.config,
+        use_preferences=False, schedule_id=schedule.id,
+    )
     by_doctor = current_assignments(schedule)
     by_night: dict[dt.date, list[str]] = {}
     for doctor_id, days in by_doctor.items():
@@ -270,6 +355,72 @@ def validate(db: Session, schedule: Schedule) -> ValidationOut:
                 warnings.append(f"{day:%a %d %b}: {len(on_call)} on call, more than the {need} asked for.")
 
     return ValidationOut(ok=not errors, errors=errors, warnings=warnings)
+
+
+def apply_swap(
+    db: Session,
+    schedule: Schedule,
+    *,
+    day: dt.date,
+    doctor_out: uuid.UUID,
+    doctor_in: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    lock: bool = True,
+) -> None:
+    """Hand one night from one doctor to another, and record the edit.
+
+    Shared by the coordinator's own swap and by approving a doctor's swap
+    request, so an approved request goes through exactly the same path — and
+    lands in the same history — as a hand edit.
+
+    Raises `ValueError` when the move cannot be made; the caller decides what
+    HTTP status that deserves.
+    """
+    if not (schedule.start_date <= day <= schedule.end_date):
+        raise ValueError(
+            f"{day} is outside this schedule ({schedule.start_date} to {schedule.end_date})."
+        )
+
+    outgoing = db.scalar(
+        select(Assignment).where(
+            Assignment.schedule_id == schedule.id,
+            Assignment.doctor_id == doctor_out,
+            Assignment.date == day,
+        )
+    )
+    if outgoing is None:
+        raise ValueError("That doctor is not on call that night.")
+
+    already = db.scalar(
+        select(Assignment).where(
+            Assignment.schedule_id == schedule.id,
+            Assignment.doctor_id == doctor_in,
+            Assignment.date == day,
+        )
+    )
+    if already is not None:
+        raise ValueError("They are already on call that night.")
+
+    outgoing.doctor_id = doctor_in
+    outgoing.locked = lock
+    outgoing.source = AssignmentSource.manual
+
+    db.add(
+        EditEvent(
+            schedule_id=schedule.id,
+            department_id=schedule.department_id,
+            actor_id=actor_id,
+            kind="swap",
+            payload={
+                "date": day.isoformat(),
+                "doctor_out": str(doctor_out),
+                "doctor_in": str(doctor_in),
+            },
+        )
+    )
+    db.flush()
+    db.refresh(schedule)
+    recompute_metrics(db, schedule)
 
 
 def points_for_date(schedule: Schedule, day: dt.date) -> float:

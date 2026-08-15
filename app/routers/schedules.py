@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.db import get_db
 from app.deps import RequireRole
 from app.models import (
@@ -26,6 +27,7 @@ from app.scheduling.solver import structural_blockers
 from app.schemas import (
     AssignIn,
     GenerateIn,
+    HistoryOut,
     LockIn,
     RetuneIn,
     ScheduleOut,
@@ -51,6 +53,7 @@ def _config(body: GenerateIn) -> dict:
         "min_rest_nights": body.min_rest_nights,
         "max_shifts_per_window": body.max_shifts_per_window,
         "spread_window_nights": body.spread_window_nights,
+        "carry_forward_days": body.carry_forward_days,
         "doctor_ids": [str(x) for x in (body.doctor_ids or [])],
     }
 
@@ -119,6 +122,7 @@ def generate(
     req = service.build_request(
         db, department_id, config,
         use_preferences=body.use_preferences, time_limit=body.time_limit,
+        schedule_id=schedule.id,
     )
     if not req.doctors:
         raise HTTPException(
@@ -292,37 +296,21 @@ def swap(
     _doctor(db, department_id, body.doctor_in)
     _in_period(schedule, body.date)
 
-    outgoing = db.scalar(
-        select(Assignment).where(
-            Assignment.schedule_id == schedule.id,
-            Assignment.doctor_id == body.doctor_out,
-            Assignment.date == body.date,
+    try:
+        service.apply_swap(
+            db, schedule,
+            day=body.date, doctor_out=body.doctor_out, doctor_in=body.doctor_in,
+            actor_id=membership.user_id, lock=body.lock,
         )
-    )
-    if outgoing is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "That doctor is not on call that night.")
-
-    already = db.scalar(
-        select(Assignment).where(
-            Assignment.schedule_id == schedule.id,
-            Assignment.doctor_id == body.doctor_in,
-            Assignment.date == body.date,
+    except ValueError as problem:
+        message = str(problem)
+        code = (
+            status.HTTP_409_CONFLICT
+            if "already on call" in message
+            else status.HTTP_404_NOT_FOUND
         )
-    )
-    if already is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "They are already on call that night.")
+        raise HTTPException(code, message)
 
-    outgoing.doctor_id = body.doctor_in
-    outgoing.locked = body.lock
-    outgoing.source = AssignmentSource.manual
-    _record(db, schedule, membership, "swap", {
-        "date": body.date.isoformat(),
-        "doctor_out": str(body.doctor_out),
-        "doctor_in": str(body.doctor_in),
-    })
-    db.flush()
-    db.refresh(schedule)
-    service.recompute_metrics(db, schedule)
     db.commit()
     db.refresh(schedule)
     return service.schedule_out(db, schedule)
@@ -351,6 +339,19 @@ def set_lock(
     db.commit()
     db.refresh(schedule)
     return service.schedule_out(db, schedule)
+
+
+@router.get("/{schedule_id}/history", response_model=list[HistoryOut])
+def schedule_history(
+    department_id: uuid.UUID,
+    schedule_id: uuid.UUID,
+    limit: int = 100,
+    membership: Membership = Depends(RequireRole(Role.member)),
+    db: Session = Depends(get_db),
+):
+    """Every hand edit made to this rota, newest first."""
+    _load(db, department_id, schedule_id)
+    return audit.describe(db, department_id=department_id, schedule_id=schedule_id, limit=limit)
 
 
 @router.get("/{schedule_id}/validate", response_model=ValidationOut)
@@ -387,6 +388,7 @@ def retune(
         anchor=anchor,
         change_penalty=3 if body.stay_close else 0,
         time_limit=body.time_limit,
+        schedule_id=schedule.id,
     )
     result = service.run(db, schedule, req)
     if not result.feasible:

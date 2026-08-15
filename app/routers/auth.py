@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import mail
 from app.config import settings
 from app.db import get_db
 from app.deps import current_user
+from app.i18n import normalise as normalise_locale
 from app.models import (
     Department,
     LoginAttempt,
@@ -22,6 +24,7 @@ from app.models import (
 )
 from app.schemas import (
     DepartmentOut,
+    LocaleIn,
     LoginIn,
     PasswordChangeIn,
     PasswordResetIn,
@@ -97,7 +100,9 @@ def _session_payload(db: Session, user: User) -> SessionOut:
 
 
 @router.post("/signup", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
-def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)) -> SessionOut:
+def signup(
+    body: SignupIn, request: Request, response: Response, db: Session = Depends(get_db)
+) -> SessionOut:
     email = _normalise(body.email)
 
     problem = password_problem(body.password, email=email, name=body.name)
@@ -108,6 +113,9 @@ def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)) ->
         email=email,
         password_hash=hash_password(body.password),
         name=body.name.strip(),
+        # What the browser asked for, unless the client said otherwise. Email
+        # is written in this language.
+        locale=normalise_locale(body.locale or request.headers.get("accept-language")),
         last_login_at=utcnow(),
     )
     db.add(user)
@@ -212,7 +220,12 @@ def change_password(
 
 
 @router.post("/password/reset-request")
-def request_password_reset(body: PasswordResetRequestIn, db: Session = Depends(get_db)) -> dict:
+def request_password_reset(
+    body: PasswordResetRequestIn,
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     email = _normalise(body.email)
     user = db.scalar(select(User).where(User.email == email))
 
@@ -231,11 +244,32 @@ def request_password_reset(body: PasswordResetRequestIn, db: Session = Depends(g
     )
     db.commit()
 
-    # No mail transport is configured yet; outside production the token is
-    # returned so the flow is usable and testable end to end.
-    if not settings.is_production:
+    # Sent after the response, so a slow mail server cannot be timed to work
+    # out which addresses are registered.
+    background.add_task(
+        mail.send_password_reset,
+        to=user.email,
+        name=user.name,
+        url=f"{mail.base_url(request)}/reset/{token}",
+        lang=user.locale,
+    )
+
+    # With no transport configured the token would otherwise be unreachable,
+    # so outside production it comes back in the body and the flow stays
+    # testable end to end. Never once mail is actually being sent.
+    if not settings.is_production and not settings.mail_enabled:
         payload["token"] = token
     return payload
+
+
+@router.post("/locale", status_code=status.HTTP_204_NO_CONTENT)
+def set_locale(
+    body: LocaleIn, user: User = Depends(current_user), db: Session = Depends(get_db)
+) -> Response:
+    """Remember which language to write to this person in."""
+    user.locale = normalise_locale(body.locale)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/password/reset", status_code=status.HTTP_204_NO_CONTENT)
