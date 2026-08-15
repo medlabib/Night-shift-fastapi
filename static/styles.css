@@ -1166,3 +1166,56 @@ pre.json .n { color: var(--text-dim); }
   background: var(--warn-soft); color: var(--warn);
 }
 .sm-empty { font-size: var(--t-xs); color: var(--text-faint); padding: var(--s2); }
+
+/* ───────────────────── right-to-left (Arabic) ─────────────────────
+   The layout mirrors wholesale rather than being patched per element:
+   these are the places that pinned themselves to a physical side and
+   need the logical one instead. */
+
+.lang-picker { max-width: 120px; }
+
+[dir="rtl"] .appbar-meta { margin-left: 0; margin-right: auto; }
+[dir="rtl"] .head-note { margin-left: 0; margin-right: auto; text-align: left; }
+[dir="rtl"] .result-actions { margin-left: 0; margin-right: auto; }
+[dir="rtl"] .cal-w { margin-left: 0; margin-right: auto; }
+[dir="rtl"] .cal-doc .cd-grade,
+[dir="rtl"] .cal-doc .cd-pin,
+[dir="rtl"] .sm-tag,
+[dir="rtl"] .grade-chip .cnt { margin-left: 0; margin-right: auto; }
+
+/* Borders and rails that mark state have to move to the other edge. */
+[dir="rtl"] .config { border-right: none; border-left: 1px solid var(--line-soft); }
+[dir="rtl"] .cal-doc { border-left: none; border-right: 2px solid var(--line); }
+[dir="rtl"] .cal-doc.is-locked { border-right-color: var(--accent); }
+[dir="rtl"] .cal-doc.is-editable:hover,
+[dir="rtl"] .cal-doc.is-editable:focus-visible,
+[dir="rtl"] .cal-doc.hit { border-right-color: var(--accent); }
+[dir="rtl"] .cal-doc.is-violation { border-right-color: var(--danger); }
+[dir="rtl"] .finding { border-left-width: 1px; border-right-width: 3px; }
+[dir="rtl"] .finding.sev-bad { border-left-color: var(--line-soft); border-right-color: var(--danger); }
+[dir="rtl"] .finding.sev-warn { border-left-color: var(--line-soft); border-right-color: var(--warn); }
+[dir="rtl"] .finding.sev-ok { border-left-color: var(--line-soft); border-right-color: var(--ok); }
+[dir="rtl"] .finding.sev-info { border-left-color: var(--line-soft); border-right-color: var(--accent); }
+[dir="rtl"] .stat::before { inset: 0 0 0 auto; }
+[dir="rtl"] .doc-row.has-blackout { box-shadow: inset -2px 0 0 var(--warn); }
+[dir="rtl"] .short { border-left: none; border-right: 2pt solid var(--danger); }
+
+/* Tabular numbers stay left-to-right even in an RTL page. */
+[dir="rtl"] .num,
+[dir="rtl"] .bar-val,
+[dir="rtl"] .stat .v,
+[dir="rtl"] .cal-num,
+[dir="rtl"] .run-elapsed { direction: ltr; }
+[dir="rtl"] table.tbl th.num,
+[dir="rtl"] table.tbl td.num { text-align: left; }
+
+/* Bars and strips fill from the inline start, which flips with the page. */
+[dir="rtl"] .bar-track, [dir="rtl"] .strip { transform: scaleX(-1); }
+[dir="rtl"] .bar-fill { transform-origin: right; }
+
+[dir="rtl"] .toasts { right: auto; left: 20px; }
+[dir="rtl"] .gauge svg { transform: rotate(-90deg) scaleX(-1); }
+
+@media (max-width: 560px) {
+  [dir="rtl"] .toasts { left: var(--s2); right: var(--s2); }
+}

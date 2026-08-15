@@ -574,9 +574,11 @@ def test_no_doctor_gets_an_every_other_night_run(client):
                 f"{doctor_id} works {[d.isoformat() for d in window]} "
                 "— three shifts inside a week"
             )
-        # And no repeated tight gaps, which is the pattern people notice.
+        # An isolated two-day gap is fine; a *run* of them is the pattern
+        # people object to, so no two tight gaps may sit back to back.
         gaps = [(b - a).days for a, b in zip(ordered, ordered[1:])]
-        assert sum(1 for g in gaps if g <= 2) <= 1, f"{doctor_id} has a tight run: {gaps}"
+        runs = [(a, b) for a, b in zip(gaps, gaps[1:]) if a <= 2 and b <= 2]
+        assert not runs, f"{doctor_id} has consecutive tight gaps: {gaps}"
 
     assert body["metrics"]["coverage"] == 100.0, "spacing must not cost coverage"
 

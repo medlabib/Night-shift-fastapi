@@ -4,23 +4,23 @@
 <table>
   <thead>
     <tr>
-      <th style="width:14%">Date</th>
-      <th style="width:10%">Day</th>
-      <th style="width:8%" class="center">Pts</th>
-      <th>On call</th>
+      <th style="width:14%">{{ t('pdf.date') }}</th>
+      <th style="width:12%">{{ t('pdf.day') }}</th>
+      <th style="width:8%" class="center">{{ t('pdf.points') }}</th>
+      <th>{{ t('pdf.onCall') }}</th>
     </tr>
   </thead>
   <tbody>
     {% for night in nights %}
     <tr class="{% if night.holiday %}holiday{% elif night.weekend %}weekend{% endif %}">
-      <td><b>{{ night.date.strftime('%d %b') }}</b></td>
-      <td class="muted">{{ night.date.strftime('%a') }}{% if night.holiday %} ·&nbsp;hol{% endif %}</td>
+      <td><b>{{ tr.short_date(night.date) }}</b></td>
+      <td class="muted">{{ tr.weekday(night.date, short=True) }}{% if night.holiday %} ·&nbsp;{{ t('pdf.holidayShort') }}{% endif %}</td>
       <td class="center"><span class="weight">{{ night.weight }}</span></td>
       <td>
         {% if night.doctors %}
           {% for d in night.doctors %}{{ d.doctor_name }}{% if d.grade %}<span class="muted"> ({{ d.grade }})</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
         {% else %}
-          <span class="muted">— nobody on call —</span>
+          <span class="muted">{{ t('pdf.nobody') }}</span>
         {% endif %}
       </td>
     </tr>

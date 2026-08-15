@@ -33,21 +33,22 @@
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"><svg><use href="#i-moon"/></svg></span>
     <span class="brand-text">
-      <strong>Night Shift</strong>
-      <em>Rota Studio</em>
+      <strong data-i18n="app.name">Night Shift</strong>
+      <em data-i18n="app.tagline">Rota Studio</em>
     </span>
   </div>
   <div class="appbar-meta">
     <span id="apiStatus" class="pill pill-muted" title="API connection">
-      <span class="dot"></span><span id="apiStatusText">checking API…</span>
+      <span class="dot"></span><span id="apiStatusText" data-i18n="api.checking">checking API…</span>
     </span>
   </div>
   <div class="appbar-actions">
+    <select id="langPicker" class="dep-picker lang-picker" data-i18n-aria="app.language"></select>
     <select id="departmentPicker" class="dep-picker" hidden aria-label="Department"></select>
-    <button class="btn btn-ghost btn-sm" id="signInBtn">Sign in</button>
+    <button class="btn btn-ghost btn-sm" id="signInBtn" data-i18n="app.signIn">Sign in</button>
     <button class="btn btn-ghost btn-sm" id="accountBtn" hidden></button>
-    <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings"><svg><use href="#i-cog"/></svg></button>
-    <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"><svg><use href="#i-sun"/></svg></button>
+    <button class="icon-btn" id="settingsBtn" data-i18n-title="app.settings" data-i18n-aria="app.settings"><svg><use href="#i-cog"/></svg></button>
+    <button class="icon-btn" id="themeBtn" data-i18n-title="app.theme" data-i18n-aria="app.theme"><svg><use href="#i-sun"/></svg></button>
   </div>
 </header>
 
@@ -59,78 +60,78 @@
 
       <section class="card" data-step="1">
         <header class="card-head">
-          <h2><span class="step">1</span> Period</h2>
+          <h2><span class="step">1</span> <span data-i18n="step.period">Period</span></h2>
           <span class="head-note" id="periodNote">—</span>
         </header>
         <div class="card-body">
           <div class="field-row">
             <label class="field">
-              <span>Start</span>
+              <span data-i18n="period.start">Start</span>
               <input type="date" id="startDate">
             </label>
             <label class="field">
-              <span>End</span>
+              <span data-i18n="period.end">End</span>
               <input type="date" id="endDate">
             </label>
           </div>
           <div class="chip-row" role="group" aria-label="Period presets">
-            <button class="chip-btn" data-preset="this-month">This month</button>
-            <button class="chip-btn" data-preset="next-month">Next month</button>
-            <button class="chip-btn" data-preset="4-weeks">Next 4 weeks</button>
+            <button class="chip-btn" data-preset="this-month" data-i18n="period.thisMonth">This month</button>
+            <button class="chip-btn" data-preset="next-month" data-i18n="period.nextMonth">Next month</button>
+            <button class="chip-btn" data-preset="4-weeks" data-i18n="period.fourWeeks">Next 4 weeks</button>
           </div>
         </div>
       </section>
 
       <section class="card" data-step="2">
         <header class="card-head">
-          <h2><span class="step">2</span> Roster</h2>
+          <h2><span class="step">2</span> <span data-i18n="step.roster">Roster</span></h2>
           <span class="head-note" id="rosterNote">0 doctors</span>
         </header>
         <div class="card-body">
           <div class="roster-input">
-            <input type="text" id="doctorInput" placeholder="Add a doctor, or paste a comma-separated list…" autocomplete="off">
+            <input type="text" id="doctorInput" data-i18n-placeholder="roster.add" autocomplete="off">
             <button class="btn btn-ghost" id="addDoctorBtn" title="Add"><svg><use href="#i-plus"/></svg></button>
           </div>
           <div class="doctor-list" id="doctorList"></div>
           <div class="inline-actions">
-            <button class="link-btn" id="demoBtn">Load a demo department</button>
-            <button class="link-btn danger" id="clearRosterBtn">Clear roster</button>
+            <button class="link-btn" id="demoBtn" data-i18n="roster.demo">Load a demo department</button>
+            <button class="link-btn danger" id="clearRosterBtn" data-i18n="roster.clear">Clear roster</button>
           </div>
 
           <label class="switch-row">
             <input type="checkbox" id="gradedToggle">
             <span class="switch" aria-hidden="true"></span>
             <span class="switch-label">
-              Department is graded
-              <em>Seniority tiers are staffed independently each night</em>
+              <span data-i18n="roster.graded">Department is graded</span>
+              <em data-i18n="roster.gradedHint">Seniority tiers are staffed independently each night</em>
             </span>
           </label>
 
           <div class="grades-block" id="gradesBlock" hidden>
             <div class="grade-input">
-              <input type="text" id="gradeInput" placeholder="Add a grade (e.g. Consultant)" autocomplete="off">
+              <input type="text" id="gradeInput" data-i18n-placeholder="roster.addGrade" autocomplete="off">
               <button class="btn btn-ghost" id="addGradeBtn"><svg><use href="#i-plus"/></svg></button>
             </div>
             <div class="grade-chips" id="gradeChips"></div>
-            <p class="hint" id="gradeAssignHint">Assign each doctor a grade using the selectors above.</p>
+            <p class="hint" id="gradeAssignHint" data-i18n="roster.gradeHint">Assign each doctor a grade using the selectors above.</p>
           </div>
         </div>
       </section>
 
       <section class="card" data-step="3">
         <header class="card-head">
-          <h2><span class="step">3</span> Coverage</h2>
+          <h2><span class="step">3</span> <span data-i18n="step.coverage">Coverage</span></h2>
           <span class="head-note" id="coverageNote">—</span>
         </header>
         <div class="card-body">
           <div class="seg" role="tablist" aria-label="Coverage mode">
-            <button class="seg-btn is-active" data-coverage="same" role="tab">Same every night</button>
-            <button class="seg-btn" data-coverage="custom" role="tab">Per-night</button>
+            <button class="seg-btn is-active" data-coverage="same" role="tab" data-i18n="coverage.same">Same every night</button>
+            <button class="seg-btn" data-coverage="custom" role="tab" data-i18n="coverage.custom">Per-night</button>
           </div>
 
           <div id="coverageSame">
             <label class="field stepper-field">
-              <span>Doctors on call per night</span>
+              <span data-i18n="coverage.perNight">Doctors on call per night</span>
               <div class="stepper">
                 <button class="step-btn" data-delta="-1" aria-label="Decrease">−</button>
                 <input type="number" id="perNight" min="1" max="20" value="2">
@@ -141,11 +142,11 @@
           </div>
 
           <div id="coverageCustom" hidden>
-            <p class="hint">Set the required headcount for each night. Weekends and holidays are highlighted.</p>
+            <p class="hint" data-i18n="coverage.customHint">Set the required headcount for each night.</p>
             <div class="chip-row">
-              <button class="chip-btn" data-bulk="all-1">All 1</button>
-              <button class="chip-btn" data-bulk="all-2">All 2</button>
-              <button class="chip-btn" data-bulk="weekend-plus">Weekends +1</button>
+              <button class="chip-btn" data-bulk="all-1" data-i18n="coverage.all1">All 1</button>
+              <button class="chip-btn" data-bulk="all-2" data-i18n="coverage.all2">All 2</button>
+              <button class="chip-btn" data-bulk="weekend-plus" data-i18n="coverage.weekendPlus">Weekends +1</button>
             </div>
             <div class="mini-cal" id="coverageCal"></div>
           </div>
@@ -154,32 +155,32 @@
 
       <section class="card" data-step="4">
         <header class="card-head">
-          <h2><span class="step">4</span> Calendar rules</h2>
+          <h2><span class="step">4</span> <span data-i18n="step.rules">Calendar rules</span></h2>
           <span class="head-note" id="holidayNote">0 holidays</span>
         </header>
         <div class="card-body">
           <div class="weights">
-            <span class="weight"><b>1.0</b> weekday</span>
-            <span class="weight w-sat"><b>1.5</b> Saturday</span>
-            <span class="weight w-sun"><b>2.0</b> Sunday</span>
-            <span class="weight w-hol"><b>2.0</b> holiday</span>
+            <span class="weight"><b>1.0</b> <span data-i18n="rules.weekday">weekday</span></span>
+            <span class="weight w-sat"><b>1.5</b> <span data-i18n="rules.saturday">Saturday</span></span>
+            <span class="weight w-sun"><b>2.0</b> <span data-i18n="rules.sunday">Sunday</span></span>
+            <span class="weight w-hol"><b>2.0</b> <span data-i18n="rules.holiday">holiday</span></span>
           </div>
-          <p class="hint">Click any night to flag it as a public holiday — it then carries the heaviest weight when balancing.</p>
+          <p class="hint" data-i18n="rules.hint">Click any night to flag it as a public holiday.</p>
           <div class="mini-cal" id="holidayCal"></div>
         </div>
       </section>
 
       <section class="card" data-step="5">
         <header class="card-head">
-          <h2><span class="step">5</span> Availability</h2>
+          <h2><span class="step">5</span> <span data-i18n="step.availability">Availability</span></h2>
           <span class="head-note" id="availNote">no blackouts</span>
         </header>
         <div class="card-body">
           <label class="field">
-            <span>Doctor</span>
+            <span data-i18n="avail.doctor">Doctor</span>
             <select id="availDoctor"></select>
           </label>
-          <p class="hint">Click nights this doctor cannot cover — leave, conference, post-nights.</p>
+          <p class="hint" data-i18n="avail.hint">Click nights this doctor cannot cover.</p>
           <div class="mini-cal" id="availCal"></div>
           <div class="blackout-summary" id="blackoutSummary"></div>
         </div>
@@ -187,12 +188,12 @@
 
       <section class="card" data-step="6">
         <header class="card-head">
-          <h2><span class="step">6</span> Search effort</h2>
+          <h2><span class="step">6</span> <span data-i18n="step.effort">Search effort</span></h2>
           <span class="head-note" id="effortNote">Balanced</span>
         </header>
         <div class="card-body">
           <input type="range" id="effort" min="0" max="4" step="1" value="2" class="range">
-          <div class="range-ticks"><span>Draft</span><span>Quick</span><span>Balanced</span><span>Thorough</span><span>Exhaustive</span></div>
+          <div class="range-ticks"><span data-i18n="effort.draft">Draft</span><span data-i18n="effort.quick">Quick</span><span data-i18n="effort.balanced">Balanced</span><span data-i18n="effort.thorough">Thorough</span><span data-i18n="effort.exhaustive">Exhaustive</span></div>
           <p class="hint" id="effortHint"></p>
         </div>
       </section>
@@ -202,7 +203,7 @@
       <div class="generate-dock">
         <button class="btn btn-primary btn-lg" id="generateBtn">
           <svg><use href="#i-spark"/></svg>
-          <span>Generate rota</span>
+          <span data-i18n="generate">Generate rota</span>
         </button>
       </div>
     </div>
@@ -211,11 +212,11 @@
   <!-- ─────────────────────────── WORKSPACE ─────────────────────────── -->
   <section class="workspace">
     <nav class="tabs" id="tabs" role="tablist">
-      <button class="tab is-active" data-tab="calendar" role="tab"><svg><use href="#i-calendar"/></svg>Calendar</button>
-      <button class="tab" data-tab="fairness" role="tab"><svg><use href="#i-scale"/></svg>Fairness</button>
-      <button class="tab" data-tab="insights" role="tab"><svg><use href="#i-bulb"/></svg>Insights<span class="tab-badge" id="insightBadge" hidden>0</span></button>
-      <button class="tab" data-tab="export" role="tab"><svg><use href="#i-download"/></svg>Export</button>
-      <button class="tab" data-tab="history" role="tab"><svg><use href="#i-history"/></svg>History</button>
+      <button class="tab is-active" data-tab="calendar" role="tab"><svg><use href="#i-calendar"/></svg><span data-i18n="tab.calendar">Calendar</span></button>
+      <button class="tab" data-tab="fairness" role="tab"><svg><use href="#i-scale"/></svg><span data-i18n="tab.fairness">Fairness</span></button>
+      <button class="tab" data-tab="insights" role="tab"><svg><use href="#i-bulb"/></svg><span data-i18n="tab.insights">Insights</span><span class="tab-badge" id="insightBadge" hidden>0</span></button>
+      <button class="tab" data-tab="export" role="tab"><svg><use href="#i-download"/></svg><span data-i18n="tab.export">Export</span></button>
+      <button class="tab" data-tab="history" role="tab"><svg><use href="#i-history"/></svg><span data-i18n="tab.history">History</span></button>
     </nav>
 
     <div class="workspace-body" id="workspaceBody">
@@ -224,19 +225,15 @@
         <div class="empty-art" aria-hidden="true">
           <svg><use href="#i-calendar"/></svg>
         </div>
-        <h2>Balance the nights, not the spreadsheet.</h2>
-        <p>
-          Build your roster on the left and the studio will model the department's own rest rule,
-          check every night for feasibility before a single request is sent, then hunt for the fairest
-          rota it can find — and audit the one it gets back.
-        </p>
+        <h2 data-i18n="empty.title">Balance the nights, not the spreadsheet.</h2>
+        <p data-i18n="empty.body">Build your roster on the left.</p>
         <div class="empty-actions">
-          <button class="btn btn-primary" id="emptyDemoBtn"><svg><use href="#i-spark"/></svg>Try a demo department</button>
+          <button class="btn btn-primary" id="emptyDemoBtn"><svg><use href="#i-spark"/></svg><span data-i18n="empty.cta">Try a demo department</span></button>
         </div>
         <ul class="empty-facts">
-          <li><b>Weights</b> Sat 1.5 · Sun & holidays 2.0 · weekdays 1.0</li>
-          <li><b>Rest</b> a night off between shifts, and never more than 2 in any 7</li>
-          <li><b>Audit</b> every returned rota is re-checked against your constraints</li>
+          <li data-i18n="empty.weights"></li>
+          <li data-i18n="empty.rest"></li>
+          <li data-i18n="empty.audit"></li>
         </ul>
       </div>
 
@@ -250,10 +247,10 @@
     <div class="run-overlay" id="runOverlay" hidden>
       <div class="run-card">
         <div class="run-spinner" aria-hidden="true"><span></span><span></span><span></span></div>
-        <h3 id="runTitle">Searching for a fair rota…</h3>
+        <h3 id="runTitle" data-i18n="run.title">Searching for a fair rota…</h3>
         <p id="runDetail">Sampling candidate rotas</p>
         <div class="run-bar"><div id="runBarFill"></div></div>
-        <p class="run-elapsed"><span id="runElapsed">0.0s</span> elapsed</p>
+        <p class="run-elapsed"><span id="runElapsed">0.0s</span> <span data-i18n="run.elapsed">elapsed</span></p>
       </div>
     </div>
   </section>
@@ -261,20 +258,20 @@
 
 <dialog class="modal" id="settingsModal">
   <form method="dialog" class="modal-inner">
-    <h3>Settings</h3>
+    <h3 data-i18n="settings.title">Settings</h3>
     <label class="field">
-      <span>API base URL</span>
+      <span data-i18n="settings.apiBase">API base URL</span>
       <input type="text" id="apiBase" placeholder="(same origin)">
     </label>
-    <p class="hint">Leave blank when the studio is served by the FastAPI app itself. Set it to e.g. <code>https://api.example.com</code> when hosting the frontend separately.</p>
+    <p class="hint" data-i18n="settings.apiHint"></p>
     <label class="switch-row compact">
       <input type="checkbox" id="autoSave" checked>
       <span class="switch" aria-hidden="true"></span>
-      <span class="switch-label">Remember my roster and rules on this device</span>
+      <span class="switch-label" data-i18n="settings.remember">Remember my roster and rules on this device</span>
     </label>
     <div class="modal-actions">
-      <button class="btn btn-ghost" value="cancel">Close</button>
-      <button class="btn btn-primary" id="saveSettings" value="save">Save</button>
+      <button class="btn btn-ghost" value="cancel" data-i18n="settings.close">Close</button>
+      <button class="btn btn-primary" id="saveSettings" value="save" data-i18n="settings.save">Save</button>
     </div>
   </form>
 </dialog>
@@ -282,31 +279,29 @@
 <dialog class="modal" id="authModal">
   <form class="modal-inner" id="authForm">
     <h3 id="authTitle">Sign in</h3>
-    <p class="hint" id="authBlurb">
-      Signing in saves your roster and rotas, and unlocks editing, PDF export and share links.
-    </p>
+    <p class="hint" id="authBlurb" data-i18n="auth.blurb"></p>
 
     <label class="field" id="authNameField" hidden>
-      <span>Your name</span>
+      <span data-i18n="auth.name">Your name</span>
       <input type="text" id="authName" autocomplete="name">
     </label>
     <label class="field">
-      <span>Email</span>
+      <span data-i18n="auth.email">Email</span>
       <input type="email" id="authEmail" autocomplete="email" required>
     </label>
     <label class="field">
-      <span>Password</span>
+      <span data-i18n="auth.password">Password</span>
       <input type="password" id="authPassword" autocomplete="current-password" required>
     </label>
     <label class="field" id="authDeptField" hidden>
-      <span>Department name</span>
-      <input type="text" id="authDept" placeholder="e.g. Emergency Medicine">
+      <span data-i18n="auth.department">Department name</span>
+      <input type="text" id="authDept" data-i18n-placeholder="auth.departmentPlaceholder">
     </label>
 
     <p class="auth-error" id="authError" hidden></p>
 
     <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" id="authCancel">Cancel</button>
+      <button type="button" class="btn btn-ghost" id="authCancel" data-i18n="auth.cancel">Cancel</button>
       <button type="submit" class="btn btn-primary" id="authSubmit">Sign in</button>
     </div>
     <p class="hint auth-switch">

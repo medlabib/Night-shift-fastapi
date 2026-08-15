@@ -29,6 +29,14 @@
   table.cal td.holiday .doc { border-left-color: #d2691a; }
   table.cal td.weekend .doc { border-left-color: #8b5cf6; }
   table.cal .none { color: #c0485f; font-size: 6pt; }
+  /* The rail marks the name, so in RTL it belongs on the other edge. */
+  html[dir="rtl"] table.cal .doc {
+    padding-left: 0; padding-right: 3pt;
+    border-left: none; border-right: 1.5pt solid #4f5fe0;
+  }
+  html[dir="rtl"] table.cal td.holiday .doc { border-right-color: #d2691a; }
+  html[dir="rtl"] table.cal td.weekend .doc { border-right-color: #8b5cf6; }
+  html[dir="rtl"] table.cal .w { float: left; }
 </style>
 
 {% for month in months %}
@@ -46,7 +54,7 @@
           <td class="{% if cell.holiday %}holiday{% elif cell.weekend %}weekend{% endif %}">
             <span class="daynum">{{ cell.date.day }}</span><span class="w">{{ cell.weight }}</span>
             {% for d in cell.doctors %}<span class="doc">{{ d.doctor_name }}</span>{% endfor %}
-            {% if not cell.doctors %}<span class="doc none">none</span>{% endif %}
+            {% if not cell.doctors %}<span class="doc none">{{ t('pdf.none') }}</span>{% endif %}
           </td>
           {% else %}
           <td class="blank"></td>

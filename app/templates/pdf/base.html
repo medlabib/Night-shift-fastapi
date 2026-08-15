@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}" dir="{{ dir }}">
 <head>
 <meta charset="utf-8">
 <title>{{ schedule.name }}</title>
@@ -12,7 +12,7 @@
       font-family: "DejaVu Sans", sans-serif; font-size: 7.5pt; color: #7b8398;
     }
     @bottom-right {
-      content: "Page " counter(page) " of " counter(pages);
+      content: counter(page) " / " counter(pages);
       font-family: "DejaVu Sans", sans-serif; font-size: 7.5pt; color: #7b8398;
     }
   }
@@ -26,6 +26,11 @@
   .head { border-bottom: 1.6pt solid #4f5fe0; padding-bottom: 6pt; margin-bottom: 10pt; }
   .head h1 { font-size: 15pt; margin: 0 0 2pt; letter-spacing: -.2pt; }
   .head .period { font-size: 9pt; color: #4d5b7c; }
+  /* Arabic needs the whole block mirrored, not just the text aligned. */
+  html[dir="rtl"] body { direction: rtl; }
+  html[dir="rtl"] th, html[dir="rtl"] td { text-align: right; }
+  html[dir="rtl"] .num { direction: ltr; text-align: left; }
+  html[dir="rtl"] .short { border-left: none; border-right: 2pt solid #dc4d68; }
   .head .meta { font-size: 7.5pt; color: #8794b3; margin-top: 3pt; }
   .head .status {
     display: inline-block; padding: 1pt 5pt; border-radius: 6pt;
@@ -72,15 +77,15 @@
 <div class="head">
   <h1>{{ schedule.name }}{% if focus_doctor %} — {{ focus_doctor }}{% endif %}</h1>
   <div class="period">
-    {{ schedule.start_date.strftime('%A %d %B %Y') }} to {{ schedule.end_date.strftime('%A %d %B %Y') }}
+    {{ t('pdf.period', start=tr.long_date(schedule.start_date), end=tr.long_date(schedule.end_date)) }}
     {# .value, or the enum renders as "ScheduleStatus.draft". #}
-    <span class="status {{ schedule.status.value }}">{{ schedule.status.value }}</span>
+    <span class="status {{ schedule.status.value }}">{{ tr.status(schedule.status) }}</span>
   </div>
   <div class="meta">
     {{ department.name }}{% if department.hospital %} · {{ department.hospital }}{% endif %}
-    · {{ nights|length }} nights · {{ assignments|length }} shifts
-    {%- if metrics.balance %} · balance {{ metrics.balance }}%{% endif %}
-    · generated {{ generated_at.strftime('%d %b %Y') }}
+    · {{ t('pdf.meta', nights=nights|length, shifts=assignments|length) }}
+    {%- if metrics.balance %} · {{ t('pdf.balance', value=metrics.balance) }}{% endif %}
+    · {{ t('pdf.generated', date=tr.short_date(generated_at.date())) }}
   </div>
 </div>
 
@@ -88,7 +93,7 @@
 
 {% if shortfalls %}
 <div class="short">
-  <h2>{{ shortfalls|length }} night{{ '' if shortfalls|length == 1 else 's' }} not fully covered</h2>
+  <h2>{{ t('pdf.shortOne') if shortfalls|length == 1 else t('pdf.shortTitle', count=shortfalls|length) }}</h2>
   <ul>
     {% for s in shortfalls[:12] %}
     <li>{{ s.date }}{% if s.grade %} · {{ s.grade }}{% endif %}:
@@ -100,13 +105,13 @@
 
 {% if show_summary and per_doctor %}
 <div class="summary">
-  <h2>Workload</h2>
+  <h2>{{ t('pdf.workload') }}</h2>
   <table>
     <thead>
       <tr>
-        <th>Doctor</th>{% if graded %}<th>Grade</th>{% endif %}
-        <th class="num">Shifts</th><th class="num">Weekend</th>
-        <th class="num">Holiday</th><th class="num">Points</th>
+        <th>{{ t('pdf.doctor') }}</th>{% if graded %}<th>{{ t('pdf.grade') }}</th>{% endif %}
+        <th class="num">{{ t('pdf.shifts') }}</th><th class="num">{{ t('pdf.weekend') }}</th>
+        <th class="num">{{ t('pdf.holiday') }}</th><th class="num">{{ t('pdf.pointsFull') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -125,9 +130,9 @@
 {% endif %}
 
 <div class="legend">
-  <span><i class="swatch" style="background:#f5f7fd"></i>Weekend</span>
-  <span><i class="swatch" style="background:#fdf3e8"></i>Public holiday</span>
-  <span>Weights: weekday 1.0 · Saturday 1.5 · Sunday and holidays 2.0</span>
+  <span><i class="swatch" style="background:#f5f7fd"></i>{{ t('pdf.legendWeekend') }}</span>
+  <span><i class="swatch" style="background:#fdf3e8"></i>{{ t('pdf.legendHoliday') }}</span>
+  <span>{{ t('pdf.legendWeights') }}</span>
 </div>
 
 </body>
